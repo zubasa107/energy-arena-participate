@@ -1,0 +1,4 @@
+requests>=2.28.0
+pandas>=2.0.0
+entsoe-py>=0.7.0
+tzdata>=2024.1
