@@ -196,11 +196,50 @@ def submit(
             print(json.dumps(payload, indent=2))
         return True
 
+    def _extract_error_detail(response: requests.Response) -> str:
+        try:
+            body = response.json()
+        except Exception:
+            return response.text.strip()
+
+        if isinstance(body, dict):
+            detail = body.get("detail")
+            if isinstance(detail, str):
+                return detail.strip()
+            if isinstance(detail, list):
+                messages = []
+                for item in detail:
+                    if isinstance(item, dict):
+                        loc = ".".join(
+                            str(x) for x in item.get("loc", []) if str(x) != "body"
+                        )
+                        msg = str(item.get("msg", "")).strip()
+                        if loc and msg:
+                            messages.append(f"{loc}: {msg}")
+                        elif msg:
+                            messages.append(msg)
+                        else:
+                            messages.append(str(item))
+                    else:
+                        messages.append(str(item))
+                return "; ".join(messages).strip()
+            if detail is not None:
+                return str(detail).strip()
+            return str(body).strip()
+
+        return str(body).strip()
+
     url = f"{api_base.rstrip('/')}/api/v1/submissions"
     headers = {"X-API-Key": api_key, "Content-Type": "application/json"}
     try:
         resp = requests.post(url, json=payload, headers=headers, timeout=30)
-        resp.raise_for_status()
+        if not resp.ok:
+            detail = _extract_error_detail(resp)
+            message = f"HTTP {resp.status_code}" + (f" - {detail}" if detail else "")
+            if verbose:
+                print(f"Submit failed: {message}", file=sys.stderr)
+            return False
+
         if verbose:
             data = resp.json()
             print(f"OK -> submission_id={data.get('submission_id')}")
