@@ -1,6 +1,6 @@
 # Windows Task Scheduler setup (11:30 CET)
 
-This config runs daily submissions at **11:30 CET** for all 3 challenges and 2 areas.
+This config runs daily submissions at **11:30 CET** for all 4 challenges and 2 areas.
 
 ## Prerequisites
 
@@ -53,6 +53,11 @@ Alternative:
 - Program/script: `python`
 - Add arguments: `run_daily_submissions.py`
 - Start in: `C:\path\to\energy-arena-participate`
+
+Optional probabilistic mode:
+
+- Add arguments: `run_daily_submissions.py --include_quantiles`
+- or: `run_daily_submissions.py --include_ensemble`
 
 ## Step 5: Save and test
 

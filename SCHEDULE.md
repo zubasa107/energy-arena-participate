@@ -40,6 +40,11 @@ Alternative action:
 - Arguments: `run_daily_submissions.py`
 - Start in: `C:\path\to\energy-arena-participate`
 
+Optional probabilistic modes:
+
+- `run_daily_submissions.py --include_quantiles`
+- `run_daily_submissions.py --include_ensemble`
+
 ---
 
 ## Linux/macOS (cron)
@@ -55,10 +60,20 @@ Replace `/path/to/energy-arena-participate` and `/usr/bin/python3` with your pat
 
 If you intentionally want global env fallback, add `--use_global_env`.
 
+If you want probabilistic submissions, append `--include_quantiles` or
+`--include_ensemble`.
+
 ---
 
 ## Optional dry run
 
 ```bash
 python run_daily_submissions.py --dry_run
+```
+
+Probabilistic dry runs:
+
+```bash
+python run_daily_submissions.py --include_quantiles --dry_run
+python run_daily_submissions.py --include_ensemble --dry_run
 ```

@@ -1,19 +1,9 @@
 #!/usr/bin/env python3
 """
-Run daily submissions for all 3 challenges and 2 areas (6 submissions total).
+Run daily submissions for all configured challenges and both areas.
 
-Target date: tomorrow (Europe/Berlin) by default, so when run at 11:30 CET
-you submit before the 12:00 deadline for that day.
-
-Usage:
-  Put ENTSOE_API_KEY and ARENA_API_KEY in local .env (recommended); then:
-
-  python run_daily_submissions.py
-  python run_daily_submissions.py --target_date 22-02-2026
-  python run_daily_submissions.py --dry_run
-  python run_daily_submissions.py --use_global_env
-
-Schedule at 11:30 CET (Windows Task Scheduler or cron) to run this script.
+Default target date: tomorrow in Europe/Berlin, so running around 11:30 local
+time submits before the 12:00 deadline for day-ahead challenges.
 """
 from __future__ import annotations
 
@@ -24,10 +14,10 @@ from datetime import date, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-# Same directory as this script
+# Same directory as this script.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from submit_forecast import (
+from submit_forecast import (  # noqa: E402
     ALLOWED_AREAS,
     CHALLENGE_ENTSOE,
     build_payload_from_entsoe,
@@ -38,9 +28,10 @@ TZ_NAME = "Europe/Berlin"
 
 
 def tomorrow_cet() -> date:
-    """Tomorrow's date in Europe/Berlin (for 11:30 CET run, this is the target day)."""
-    tz = ZoneInfo(TZ_NAME)
+    """Tomorrow's date in Europe/Berlin."""
     from datetime import datetime
+
+    tz = ZoneInfo(TZ_NAME)
     now = datetime.now(tz).date()
     return now + timedelta(days=1)
 
@@ -73,13 +64,13 @@ def _load_local_env_values() -> dict:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Submit forecasts for all challenges and areas (target = tomorrow by default)."
+        description="Submit forecasts for all challenges and areas."
     )
     parser.add_argument(
         "--target_date",
         type=str,
         default=None,
-        help="Target day DD-MM-YYYY (default: tomorrow CET).",
+        help="Target day DD-MM-YYYY (default: tomorrow in Europe/Berlin).",
     )
     parser.add_argument(
         "--dry_run",
@@ -90,6 +81,16 @@ def main() -> None:
         "--use_global_env",
         action="store_true",
         help="Allow fallback to globally set ENTSOE_API_KEY/ARENA_API_KEY if missing in local .env.",
+    )
+    parser.add_argument(
+        "--include_quantiles",
+        action="store_true",
+        help="Append quantiles estimated from historical analog values.",
+    )
+    parser.add_argument(
+        "--include_ensemble",
+        action="store_true",
+        help="Append quantiles plus ensemble members estimated from historical analog values.",
     )
     args = parser.parse_args()
 
@@ -132,9 +133,19 @@ def main() -> None:
         target_date = tomorrow_cet()
 
     target_str = target_date_to_dd_mm_yyyy(target_date)
-    print(f"Target date: {target_date} ({target_str}) | challenges: {list(CHALLENGE_ENTSOE)} | areas: {ALLOWED_AREAS}")
+    mode_bits = []
+    if args.include_quantiles or args.include_ensemble:
+        mode_bits.append("quantiles")
+    if args.include_ensemble:
+        mode_bits.append("ensemble")
+    mode_suffix = f" | probabilistic: {', '.join(mode_bits)}" if mode_bits else ""
+
+    print(
+        f"Target date: {target_date} ({target_str}) | challenges: {list(CHALLENGE_ENTSOE)} "
+        f"| areas: {ALLOWED_AREAS}{mode_suffix}"
+    )
     if args.dry_run:
-        print(" dry_run: no submissions will be sent.")
+        print("dry_run: no submissions will be sent.")
     print()
 
     ok_count = 0
@@ -147,6 +158,9 @@ def main() -> None:
                     challenge_id=challenge_id,
                     area=area,
                     entsoe_api_key=entsoe_key,
+                    api_base=api_base,
+                    include_quantiles=args.include_quantiles,
+                    include_ensemble=args.include_ensemble,
                 )
                 ok = submit(
                     payload=payload,

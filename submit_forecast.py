@@ -1,26 +1,22 @@
 #!/usr/bin/env python3
 """
-Submit a day-ahead forecast to the Energy Arena — one script, run locally.
+Submit a day-ahead forecast to the Energy Arena from a local machine.
 
-Uses ENTSO-E data: d-1 actuals for price, d-2 actuals for load and solar.
-Timestamps are shifted to the target date and POSTed to the Arena.
+Point forecast logic:
+  - day_ahead_price: d-1 ENTSO-E day-ahead prices
+  - day_ahead_load: d-2 ENTSO-E actual load
+  - day_ahead_solar: d-2 ENTSO-E actual solar generation
+  - day_ahead_wind: d-2 ENTSO-E actual onshore wind generation
 
-Usage:
-  1. Put ENTSOE_API_KEY and ARENA_API_KEY in local .env (recommended),
-     or pass --api_key / --use_global_env.
-  2. Run:
+Optional probabilistic extension:
+  - --include_quantiles: append quantile forecasts estimated from historical
+    analog values.
+  - --include_ensemble: append quantile forecasts plus ensemble members
+    estimated from the same historical analog values.
 
-  python submit_forecast.py --target_date 21-02-2026 --challenge_id day_ahead_price --area DE_LU
-
-  python submit_forecast.py --target_date 21-02-2026 --challenge_id day_ahead_load --area DE_LU
-  python submit_forecast.py --target_date 21-02-2026 --challenge_id day_ahead_solar --area DE_LU
-
-  python submit_forecast.py --target_date 21-02-2026 --dry_run   # print payload, do not submit
-
-Forecasting logic (aligned with BAREF submit_d1_forecast):
-  - day_ahead_price: ENTSO-E d-1 day-ahead prices → shift to target date.
-  - day_ahead_load:  ENTSO-E d-2 actual load    → shift to target date.
-  - day_ahead_solar: ENTSO-E d-2 actual solar   → shift to target date.
+The probabilistic history pattern mirrors the current naive benchmark:
+  - price/load: weekly analogs (d-7, d-14, d-21, ...)
+  - solar/wind: daily submission-aware analogs (d-2, d-3, d-4, ...)
 """
 from __future__ import annotations
 
@@ -29,19 +25,56 @@ import os
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
 
+import numpy as np
 import pandas as pd
 import requests
 from entsoe import EntsoePandasClient
 
-# Challenge id -> (entsoe_method, production_type for query_generation or None, lookback_days)
-# Price: d-1; load and solar: d-2
-CHALLENGE_ENTSOE = {
-    "day_ahead_price": ("query_day_ahead_prices", None, 1),
-    "day_ahead_load": ("query_load", None, 2),
-    "day_ahead_solar": ("query_generation", "Solar - Actual Aggregated", 2),
+
+CHALLENGE_ENTSOE: Dict[str, Dict[str, Any]] = {
+    "day_ahead_price": {
+        "entsoe_method": "query_day_ahead_prices",
+        "production_type": None,
+        "point_lookback_days": 1,
+        "history_start_lookback_days": 7,
+        "history_step_days": 7,
+        "history_count": 20,
+        "fallback_quantiles": [0.025, 0.25, 0.5, 0.75, 0.975],
+        "fallback_max_ensemble_size": 10,
+    },
+    "day_ahead_load": {
+        "entsoe_method": "query_load",
+        "production_type": None,
+        "point_lookback_days": 2,
+        "history_start_lookback_days": 7,
+        "history_step_days": 7,
+        "history_count": 20,
+        "fallback_quantiles": [0.025, 0.25, 0.5, 0.75, 0.975],
+        "fallback_max_ensemble_size": 10,
+    },
+    "day_ahead_solar": {
+        "entsoe_method": "query_generation",
+        "production_type": "Solar - Actual Aggregated",
+        "point_lookback_days": 2,
+        "history_start_lookback_days": 2,
+        "history_step_days": 1,
+        "history_count": 20,
+        "fallback_quantiles": [0.025, 0.25, 0.5, 0.75, 0.975],
+        "fallback_max_ensemble_size": 10,
+    },
+    "day_ahead_wind": {
+        "entsoe_method": "query_generation",
+        "production_type": "Wind Onshore - Actual Aggregated",
+        "point_lookback_days": 2,
+        "history_start_lookback_days": 2,
+        "history_step_days": 1,
+        "history_count": 20,
+        "fallback_quantiles": [0.025, 0.25, 0.5, 0.75, 0.975],
+        "fallback_max_ensemble_size": 10,
+    },
 }
 
 ALLOWED_AREAS = ["DE_LU", "AT"]
@@ -78,6 +111,67 @@ def _load_local_env_values() -> dict:
     return _load_env_file(repo_root / ".env")
 
 
+def fetch_challenge_detail(api_base: str, challenge_id: str) -> Optional[dict]:
+    """
+    Fetch public challenge metadata from the Energy-Arena API.
+
+    If this fails, the script falls back to the local mapping above.
+    """
+    url = f"{api_base.rstrip('/')}/api/v1/challenges/{challenge_id}"
+    try:
+        response = requests.get(url, timeout=20)
+    except requests.RequestException:
+        return None
+    if not response.ok:
+        return None
+    try:
+        body = response.json()
+    except Exception:
+        return None
+    return body if isinstance(body, dict) else None
+
+
+def get_probabilistic_settings(
+    challenge_id: str,
+    api_base: str,
+) -> tuple[List[float], int]:
+    """
+    Get quantiles and ensemble size from the challenge API if available.
+    """
+    challenge_cfg = CHALLENGE_ENTSOE[challenge_id]
+    fallback_quantiles = [
+        float(q) for q in challenge_cfg.get("fallback_quantiles", [])
+    ]
+    fallback_max_ensemble_size = int(
+        challenge_cfg.get("fallback_max_ensemble_size", 0) or 0
+    )
+
+    detail = fetch_challenge_detail(api_base, challenge_id)
+    if not detail:
+        return fallback_quantiles, fallback_max_ensemble_size
+
+    pf_cfg = detail.get("probabilistic_forecast") or {}
+    raw_quantiles = pf_cfg.get("quantiles") or fallback_quantiles
+    raw_max_ensemble_size = pf_cfg.get(
+        "max_ensemble_size", fallback_max_ensemble_size
+    )
+
+    quantiles: List[float] = []
+    for q in raw_quantiles:
+        try:
+            quantiles.append(float(q))
+        except (TypeError, ValueError):
+            continue
+    quantiles = sorted(quantiles)
+
+    try:
+        max_ensemble_size = int(raw_max_ensemble_size or 0)
+    except (TypeError, ValueError):
+        max_ensemble_size = fallback_max_ensemble_size
+
+    return quantiles, max(0, max_ensemble_size)
+
+
 def _extract_series_from_result(
     result: Any,
     method_name: str,
@@ -89,7 +183,9 @@ def _extract_series_from_result(
     if isinstance(result, pd.DataFrame) and isinstance(result.columns, pd.MultiIndex):
         result = result.copy()
         result.columns = [
-            " - ".join(str(c) for c in col if str(c) != "") if isinstance(col, tuple) else str(col)
+            " - ".join(str(c) for c in col if str(c) != "")
+            if isinstance(col, tuple)
+            else str(col)
             for col in result.columns
         ]
 
@@ -100,8 +196,8 @@ def _extract_series_from_result(
                 series = result.iloc[:, 0]
         elif production_type is None:
             raise ValueError(
-                f"Method {method_name} returned DataFrame with columns: {list(result.columns)}. "
-                "Specify production_type for query_generation."
+                f"Method {method_name} returned DataFrame with columns: "
+                f"{list(result.columns)}. Specify production_type for query_generation."
             )
         elif production_type not in result.columns:
             raise ValueError(
@@ -135,7 +231,7 @@ def fetch_entsoe_series(
     tz: str = TZ_NAME,
     production_type: Optional[str] = None,
 ) -> pd.Series:
-    """Fetch one day of ENTSO-E data. Returns empty Series if data missing or has NaN/inf."""
+    """Fetch one day of ENTSO-E data. Returns empty Series if missing."""
     client = EntsoePandasClient(api_key=api_key)
     start_ts = pd.Timestamp(delivery_date, tz=tz)
     end_ts = start_ts + pd.Timedelta(days=1)
@@ -144,9 +240,132 @@ def fetch_entsoe_series(
         raise RuntimeError(f"EntsoePandasClient has no method {entsoe_method!r}")
 
     result = method(country_code=area, start=start_ts, end=end_ts)
-    series = _extract_series_from_result(result, entsoe_method, production_type, start_ts, end_ts)
+    series = _extract_series_from_result(
+        result, entsoe_method, production_type, start_ts, end_ts
+    )
     series = series.replace([float("inf"), float("-inf")], float("nan")).dropna()
     return series
+
+
+def _series_to_shifted_points(
+    series: pd.Series,
+    lookback_days: int,
+    tz_name: str,
+) -> List[Dict[str, float | str]]:
+    """
+    Shift a fetched ENTSO-E series forward to the target date grid.
+    """
+    tz = ZoneInfo(tz_name)
+    delta = timedelta(days=lookback_days)
+    points: List[Dict[str, float | str]] = []
+
+    for ts, value in series.items():
+        if hasattr(ts, "to_pydatetime"):
+            ts_dt = ts.to_pydatetime()
+        else:
+            ts_dt = datetime.fromisoformat(str(ts))
+        if ts_dt.tzinfo is None:
+            ts_dt = ts_dt.replace(tzinfo=tz)
+        new_ts = ts_dt + delta
+        points.append({"ts": new_ts.isoformat(), "value": float(value)})
+
+    points.sort(key=lambda p: str(p["ts"]))
+    return points
+
+
+def collect_probabilistic_history_samples(
+    target_date: date,
+    challenge_id: str,
+    area: str,
+    entsoe_api_key: str,
+    tz_name: str = TZ_NAME,
+) -> Dict[str, List[float]]:
+    """
+    Collect historical analog values per target timestamp.
+    """
+    challenge_cfg = CHALLENGE_ENTSOE[challenge_id]
+    entsoe_method = str(challenge_cfg["entsoe_method"])
+    production_type = challenge_cfg.get("production_type")
+    start_lookback_days = int(challenge_cfg["history_start_lookback_days"])
+    step_days = int(challenge_cfg["history_step_days"])
+    history_count = int(challenge_cfg["history_count"])
+
+    history_by_ts: Dict[str, List[float]] = {}
+    for i in range(history_count):
+        lookback_days = start_lookback_days + i * step_days
+        delivery_date = target_date - timedelta(days=lookback_days)
+        series = fetch_entsoe_series(
+            api_key=entsoe_api_key,
+            entsoe_method=entsoe_method,
+            area=area,
+            delivery_date=delivery_date,
+            tz=tz_name,
+            production_type=production_type,
+        )
+        if series.empty:
+            continue
+
+        for point in _series_to_shifted_points(series, lookback_days, tz_name):
+            ts = str(point["ts"])
+            history_by_ts.setdefault(ts, []).append(float(point["value"]))
+
+    return history_by_ts
+
+
+def attach_probabilistic_vectors(
+    points: List[Dict[str, float | str]],
+    quantiles: List[float],
+    max_ensemble_size: int,
+    history_by_ts: Dict[str, List[float]],
+    include_quantiles: bool,
+    include_ensemble: bool,
+) -> List[Dict[str, float | str | List[float]]]:
+    """
+    Convert point forecast entries into [pf, q1, ..., qN, e1, ..., eM].
+    """
+    include_quantiles = include_quantiles or include_ensemble
+    ensemble_size = max_ensemble_size if include_ensemble else 0
+
+    if not include_quantiles and ensemble_size <= 0:
+        return points
+
+    out: List[Dict[str, float | str | List[float]]] = []
+    for point in points:
+        pf = float(point["value"])
+        ts = str(point["ts"])
+        history_values = history_by_ts.get(ts, [])
+
+        if include_quantiles and quantiles:
+            if history_values:
+                q_vals = np.quantile(
+                    np.array(history_values, dtype=float), quantiles
+                ).tolist()
+            else:
+                q_vals = [pf for _ in quantiles]
+        else:
+            q_vals = []
+
+        if ensemble_size > 0:
+            if history_values:
+                ensemble_vals = [float(v) for v in history_values[:ensemble_size]]
+                if len(ensemble_vals) < ensemble_size:
+                    pad_value = ensemble_vals[-1] if ensemble_vals else pf
+                    ensemble_vals.extend(
+                        [float(pad_value)] * (ensemble_size - len(ensemble_vals))
+                    )
+            else:
+                ensemble_vals = [pf for _ in range(ensemble_size)]
+        else:
+            ensemble_vals = []
+
+        out.append(
+            {
+                "ts": ts,
+                "value": [pf, *[float(v) for v in q_vals], *ensemble_vals],
+            }
+        )
+
+    return out
 
 
 def build_payload_from_entsoe(
@@ -154,15 +373,21 @@ def build_payload_from_entsoe(
     challenge_id: str,
     area: str,
     entsoe_api_key: str,
+    api_base: str = "https://api.energy-arena.org",
+    include_quantiles: bool = False,
+    include_ensemble: bool = False,
     tz_name: str = TZ_NAME,
 ) -> dict:
     """
-    Fetch ENTSO-E data (d-1 for price, d-2 for load/solar), shift to target_date, build payload.
+    Fetch ENTSO-E data, shift to target_date, and build a submission payload.
     """
     if challenge_id not in CHALLENGE_ENTSOE:
         raise ValueError(f"Unknown challenge_id: {challenge_id}")
 
-    entsoe_method, production_type, lookback_days = CHALLENGE_ENTSOE[challenge_id]
+    challenge_cfg = CHALLENGE_ENTSOE[challenge_id]
+    entsoe_method = str(challenge_cfg["entsoe_method"])
+    production_type = challenge_cfg.get("production_type")
+    lookback_days = int(challenge_cfg["point_lookback_days"])
     delivery_date = target_date - timedelta(days=lookback_days)
 
     series = fetch_entsoe_series(
@@ -179,20 +404,30 @@ def build_payload_from_entsoe(
             "Data may not be published yet."
         )
 
-    tz = ZoneInfo(tz_name)
-    delta = timedelta(days=lookback_days)
-    points = []
-    for ts, value in series.items():
-        if hasattr(ts, "to_pydatetime"):
-            ts_dt = ts.to_pydatetime()
-        else:
-            ts_dt = datetime.fromisoformat(str(ts))
-        if ts_dt.tzinfo is None:
-            ts_dt = ts_dt.replace(tzinfo=tz)
-        new_ts = ts_dt + delta
-        points.append({"ts": new_ts.isoformat(), "value": float(value)})
-    points.sort(key=lambda p: p["ts"])
+    points = _series_to_shifted_points(series, lookback_days, tz_name)
 
+    if include_quantiles or include_ensemble:
+        quantiles, max_ensemble_size = get_probabilistic_settings(
+            challenge_id=challenge_id,
+            api_base=api_base,
+        )
+        history_by_ts = collect_probabilistic_history_samples(
+            target_date=target_date,
+            challenge_id=challenge_id,
+            area=area,
+            entsoe_api_key=entsoe_api_key,
+            tz_name=tz_name,
+        )
+        points = attach_probabilistic_vectors(
+            points=points,
+            quantiles=quantiles,
+            max_ensemble_size=max_ensemble_size,
+            history_by_ts=history_by_ts,
+            include_quantiles=include_quantiles,
+            include_ensemble=include_ensemble,
+        )
+
+    tz = ZoneInfo(tz_name)
     target_start = datetime(
         target_date.year, target_date.month, target_date.day, 0, 0, 0, tzinfo=tz
     )
@@ -211,10 +446,11 @@ def submit(
     dry_run: bool = False,
     verbose: bool = True,
 ) -> bool:
-    """POST payload to Arena submissions API. Returns True on success."""
+    """POST payload to the Arena submissions API. Returns True on success."""
     if dry_run:
         if verbose:
             import json
+
             print("Payload (dry run):")
             print(json.dumps(payload, indent=2))
         return True
@@ -276,7 +512,7 @@ def submit(
 def main() -> None:
     local_env = _load_local_env_values()
     parser = argparse.ArgumentParser(
-        description="Submit a day-ahead forecast to the Energy Arena (ENTSO-E d-1/d-2 persistence)."
+        description="Submit a day-ahead forecast to the Energy Arena."
     )
     parser.add_argument(
         "--target_date",
@@ -288,7 +524,7 @@ def main() -> None:
         "--challenge_id",
         type=str,
         default="day_ahead_price",
-        choices=["day_ahead_price", "day_ahead_load", "day_ahead_solar"],
+        choices=list(CHALLENGE_ENTSOE),
         help="Challenge code (default: day_ahead_price).",
     )
     parser.add_argument(
@@ -324,6 +560,16 @@ def main() -> None:
         action="store_true",
         help="Build and print payload only; do not submit.",
     )
+    parser.add_argument(
+        "--include_quantiles",
+        action="store_true",
+        help="Append quantiles estimated from historical analog values.",
+    )
+    parser.add_argument(
+        "--include_ensemble",
+        action="store_true",
+        help="Append quantiles plus ensemble members estimated from historical analog values.",
+    )
     args = parser.parse_args()
 
     entsoe_key = local_env.get("ENTSOE_API_KEY", "").strip()
@@ -353,10 +599,20 @@ def main() -> None:
         print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
-    _, _, lookback = CHALLENGE_ENTSOE[args.challenge_id]
+    lookback = int(CHALLENGE_ENTSOE[args.challenge_id]["point_lookback_days"])
+    probabilistic_mode = []
+    if args.include_quantiles or args.include_ensemble:
+        probabilistic_mode.append("quantiles")
+    if args.include_ensemble:
+        probabilistic_mode.append("ensemble")
+    mode_suffix = (
+        " | probabilistic: " + ", ".join(probabilistic_mode)
+        if probabilistic_mode
+        else ""
+    )
     print(
         f"Target date: {target_date} | challenge: {args.challenge_id} | area: {args.area} | "
-        f"ENTSO-E d-{lookback}"
+        f"ENTSO-E d-{lookback}{mode_suffix}"
     )
 
     try:
@@ -365,11 +621,15 @@ def main() -> None:
             challenge_id=args.challenge_id,
             area=args.area,
             entsoe_api_key=entsoe_key,
+            api_base=args.api_base,
+            include_quantiles=args.include_quantiles,
+            include_ensemble=args.include_ensemble,
         )
     except Exception as e:
         print(f"Error: {type(e).__name__}: {e}", file=sys.stderr)
         if not str(e).strip():
             import traceback
+
             traceback.print_exc(file=sys.stderr)
         sys.exit(1)
 
