@@ -33,6 +33,14 @@ cd energy-arena-participate
 pip install -r requirements.txt
 ```
 
+With conda (recommended to keep dependencies isolated):
+
+```bash
+conda create --name energyarena python=3.10
+conda activate energyarena
+pip install -r requirements.txt
+```
+
 ### 2) Create local `.env` (recommended)
 
 Copy `.env.example` to `.env` and set your keys:
@@ -54,12 +62,14 @@ Optional: allow fallback to global environment variables with `--use_global_env`
 ### 3) Submit one point forecast
 
 ```bash
-python submit_forecast.py --target_date 20-02-2026 --challenge_id day_ahead_price --area DE_LU
+python submit_forecast.py --target_date 20-03-2026 --challenge_id day_ahead_price --area DE_LU
 ```
 
-- `target_date`: `DD-MM-YYYY`
+- `target_date`: `DD-MM-YYYY` — **must be tomorrow's date** (the day you are forecasting for). The script fetches ENTSO-E data from the previous day(s) and the data for future days is not yet published, so running with a date more than one day ahead will fail with `NoMatchingDataError`.
 - `challenge_id`: `day_ahead_price` | `day_ahead_load` | `day_ahead_solar` | `day_ahead_wind`
 - `area`: `DE_LU` | `AT`
+
+The script POSTs a JSON payload directly to `{ARENA_API_BASE_URL}/api/v1/submissions`. No local file is needed — the forecast is computed on the fly from ENTSO-E data and sent to the Energy Arena platform in one step.
 
 Optional overrides:
 
