@@ -185,11 +185,12 @@ def print_open_challenge_infos(challenge_infos: Dict[str, Any]) -> None:
     headers = (
         "Name",
         "Challenge ID",
+        "Forecast Format",
         "Areas",
         "Next Submission Deadline",
         "Next Target Start",
     )
-    rows: List[tuple[str, str, str, str, str]] = []
+    rows: List[tuple[str, str, str, str, str, str]] = []
 
     for entry in active:
         if not isinstance(entry, dict):
@@ -197,6 +198,7 @@ def print_open_challenge_infos(challenge_infos: Dict[str, Any]) -> None:
 
         challenge_id = str(entry.get("challenge_id", "unknown"))
         challenge_name = str(entry.get("challenge_name", challenge_id))
+        forecast_format = str(entry.get("accepted_forecast_format", "pf"))
         areas = entry.get("areas") or []
         deadline = entry.get("next_submission_deadline") or "unknown"
         target_start = entry.get("next_target_start") or "unknown"
@@ -204,6 +206,7 @@ def print_open_challenge_infos(challenge_infos: Dict[str, Any]) -> None:
             (
                 challenge_name,
                 challenge_id,
+                forecast_format,
                 ", ".join(str(area) for area in areas) if areas else "-",
                 str(deadline),
                 str(target_start),
@@ -220,6 +223,11 @@ def print_open_challenge_infos(challenge_infos: Dict[str, Any]) -> None:
     print("  ".join("-" * width for width in widths))
     for row in rows:
         print(format_row.format(*row))
+    print()
+    print("Legend:")
+    print("  pf = point forecast")
+    print("  qX = quantile forecast at X percent (for example q2.5 = 2.5th percentile)")
+    print("  eX = ensemble member X")
 
 
 def save_payload_to_file(payload: dict, output_path: str) -> Path:

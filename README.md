@@ -69,9 +69,16 @@ This calls the public `GET /api/v1/challenges/open` endpoint and prints:
 
 - challenge names
 - active `challenge_id` values
+- accepted forecast format
 - valid `areas`
 - `next_submission_deadline`
 - `next_target_start`
+
+Below the table, the script also prints a short legend:
+
+- `pf` = point forecast
+- `qX` = quantile forecast at `X` percent
+- `eX` = ensemble member `X`
 
 If you want the raw helper in your own Python code:
 
@@ -87,6 +94,7 @@ for entry in infos["active_challenges"]:
     print(
         entry["challenge_name"],
         entry["challenge_id"],
+        entry["accepted_forecast_format"],
         entry["areas"],
         entry["next_submission_deadline"],
         entry["next_target_start"],
