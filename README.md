@@ -162,7 +162,38 @@ Notes:
 - quantile definitions and maximum ensemble size are pulled from the public challenge API when available, otherwise the local fallback mapping is used
 - for a first test, keep the default point-forecast mode and switch on probabilistic output afterwards
 
-### 6) Daily run at 11:30 CET (all 4 challenges x 2 areas)
+### 6) Integrate your own model
+
+If you want to replace the naive ENTSO-E baseline with your own model, you do
+not need to edit `submit_forecast.py` directly anymore.
+
+Recommended path:
+
+1. Copy `custom_model_template.py` to `custom_model.py`
+2. Edit `transform_payload(...)` in `custom_model.py`
+3. Validate with `--dry_run --save_payload ...`
+4. Submit one manual forecast
+5. Only then enable daily automation
+
+Copy command examples:
+
+```bash
+# Windows PowerShell
+Copy-Item custom_model_template.py custom_model.py
+
+# macOS / Linux
+cp custom_model_template.py custom_model.py
+```
+
+The starter scripts automatically load `custom_model.py` if it exists, and the
+same custom model path is used by both `submit_forecast.py` and
+`run_daily_submissions.py`.
+
+Detailed guide:
+
+- `MODEL_INTEGRATION.md`
+
+### 7) Daily run at 11:30 CET (all 4 challenges x 2 areas)
 
 ```bash
 python run_daily_submissions.py
@@ -194,7 +225,9 @@ python run_daily_submissions.py --use_global_env
 ## Repository layout
 
 - `submit_forecast.py` - single submission
+- `custom_model_template.py` - copy this to `custom_model.py` to add your own model without editing the starter scripts
 - `challenge_catalog.py` - helper for `GET /api/v1/challenges/open`
+- `MODEL_INTEGRATION.md` - detailed guide for replacing the baseline with your own model
 - `run_daily_submissions.py` - daily batch submission
 - `run_daily_submissions.bat` / `run_daily_submissions.ps1` - scheduler-friendly launchers
 - `SCHEDULE.md` - scheduling reference (Windows + cron)

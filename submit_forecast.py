@@ -22,6 +22,7 @@ The probabilistic history pattern mirrors the current naive benchmark:
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -84,6 +85,8 @@ CHALLENGE_ENTSOE: Dict[str, Dict[str, Any]] = {
 
 ALLOWED_AREAS = ["DE_LU", "AT"]
 TZ_NAME = "Europe/Berlin"
+_CUSTOM_MODEL_MODULE: Any | None = None
+_CUSTOM_MODEL_LOAD_ATTEMPTED = False
 
 
 def parse_target_date(s: str) -> date:
@@ -239,6 +242,69 @@ def save_payload_to_file(payload: dict, output_path: str) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path.resolve()
+
+
+def _load_custom_model_module() -> Any | None:
+    """
+    Load custom_model.py once if the user created it locally.
+    """
+    global _CUSTOM_MODEL_MODULE
+    global _CUSTOM_MODEL_LOAD_ATTEMPTED
+
+    if _CUSTOM_MODEL_LOAD_ATTEMPTED:
+        return _CUSTOM_MODEL_MODULE
+
+    _CUSTOM_MODEL_LOAD_ATTEMPTED = True
+    repo_root = Path(__file__).resolve().parent
+    custom_model_path = repo_root / "custom_model.py"
+    if not custom_model_path.exists() or not custom_model_path.is_file():
+        _CUSTOM_MODEL_MODULE = None
+        return None
+
+    spec = importlib.util.spec_from_file_location(
+        "energy_arena_custom_model",
+        custom_model_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Could not load {custom_model_path.name}.")
+
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise RuntimeError(f"Failed to import {custom_model_path.name}: {exc}") from exc
+
+    if not callable(getattr(module, "build_payload", None)) and not callable(
+        getattr(module, "transform_payload", None)
+    ):
+        raise RuntimeError(
+            f"{custom_model_path.name} must define build_payload(...) "
+            "or transform_payload(...)."
+        )
+
+    _CUSTOM_MODEL_MODULE = module
+    return module
+
+
+def _validate_payload(payload: Any, *, source: str) -> dict:
+    """
+    Validate the minimal submission payload shape after a custom hook ran.
+    """
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"{source} must return a dictionary payload.")
+
+    missing = [
+        key
+        for key in ("challenge_id", "area", "target_start", "points")
+        if key not in payload
+    ]
+    if missing:
+        raise RuntimeError(f"{source} returned a payload missing keys: {missing}")
+
+    if not isinstance(payload.get("points"), list):
+        raise RuntimeError(f"{source} returned payload['points'] that is not a list.")
+
+    return payload
 
 
 def _extract_series_from_result(
@@ -510,6 +576,78 @@ def build_payload_from_entsoe(
     }
 
 
+def build_payload(
+    target_date: date,
+    challenge_id: str,
+    area: str,
+    entsoe_api_key: str,
+    api_base: str = "https://api.energy-arena.org",
+    include_quantiles: bool = False,
+    include_ensemble: bool = False,
+    tz_name: str = TZ_NAME,
+) -> dict:
+    """
+    Shared payload builder used by both single submissions and daily automation.
+
+    By default this returns the baseline ENTSO-E payload. If a local
+    custom_model.py exists, it can either:
+    - define build_payload(...) for a full override, or
+    - define transform_payload(payload=..., ...) to modify the baseline payload
+    """
+    custom_model = _load_custom_model_module()
+    custom_build_payload = (
+        getattr(custom_model, "build_payload", None) if custom_model else None
+    )
+    if callable(custom_build_payload):
+        custom_payload = custom_build_payload(
+            target_date=target_date,
+            challenge_id=challenge_id,
+            area=area,
+            entsoe_api_key=entsoe_api_key,
+            api_base=api_base,
+            include_quantiles=include_quantiles,
+            include_ensemble=include_ensemble,
+            tz_name=tz_name,
+        )
+        return _validate_payload(
+            custom_payload,
+            source="custom_model.build_payload",
+        )
+
+    payload = build_payload_from_entsoe(
+        target_date=target_date,
+        challenge_id=challenge_id,
+        area=area,
+        entsoe_api_key=entsoe_api_key,
+        api_base=api_base,
+        include_quantiles=include_quantiles,
+        include_ensemble=include_ensemble,
+        tz_name=tz_name,
+    )
+
+    custom_transform_payload = (
+        getattr(custom_model, "transform_payload", None) if custom_model else None
+    )
+    if callable(custom_transform_payload):
+        transformed_payload = custom_transform_payload(
+            payload=payload,
+            target_date=target_date,
+            challenge_id=challenge_id,
+            area=area,
+            entsoe_api_key=entsoe_api_key,
+            api_base=api_base,
+            include_quantiles=include_quantiles,
+            include_ensemble=include_ensemble,
+            tz_name=tz_name,
+        )
+        return _validate_payload(
+            transformed_payload,
+            source="custom_model.transform_payload",
+        )
+
+    return payload
+
+
 def submit(
     payload: dict,
     api_key: str,
@@ -774,7 +912,7 @@ def main() -> None:
                     )
 
     try:
-        payload = build_payload_from_entsoe(
+        payload = build_payload(
             target_date=target_date,
             challenge_id=args.challenge_id,
             area=args.area,

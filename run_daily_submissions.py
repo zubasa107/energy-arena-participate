@@ -5,6 +5,7 @@ Run daily submissions for all configured challenges and both areas.
 Default target date: tomorrow in Europe/Berlin, so running around 11:30 local
 time submits before the 12:00 deadline for day-ahead challenges.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -20,7 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from submit_forecast import (  # noqa: E402
     ALLOWED_AREAS,
     CHALLENGE_ENTSOE,
-    build_payload_from_entsoe,
+    build_payload,
     submit,
 )
 
@@ -153,7 +154,7 @@ def main() -> None:
     for challenge_id in CHALLENGE_ENTSOE:
         for area in ALLOWED_AREAS:
             try:
-                payload = build_payload_from_entsoe(
+                payload = build_payload(
                     target_date=target_date,
                     challenge_id=challenge_id,
                     area=area,
