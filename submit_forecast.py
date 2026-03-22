@@ -18,9 +18,11 @@ The probabilistic history pattern mirrors the current naive benchmark:
   - price/load: weekly analogs (d-7, d-14, d-21, ...)
   - solar/wind: daily submission-aware analogs (d-2, d-3, d-4, ...)
 """
+
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -33,6 +35,8 @@ import numpy as np
 import pandas as pd
 import requests
 from entsoe import EntsoePandasClient
+
+from challenge_catalog import get_active_challenge_lookup, get_challenge_infos
 
 
 CHALLENGE_ENTSOE: Dict[str, Dict[str, Any]] = {
@@ -140,9 +144,7 @@ def get_probabilistic_settings(
     Get quantiles and ensemble size from the challenge API if available.
     """
     challenge_cfg = CHALLENGE_ENTSOE[challenge_id]
-    fallback_quantiles = [
-        float(q) for q in challenge_cfg.get("fallback_quantiles", [])
-    ]
+    fallback_quantiles = [float(q) for q in challenge_cfg.get("fallback_quantiles", [])]
     fallback_max_ensemble_size = int(
         challenge_cfg.get("fallback_max_ensemble_size", 0) or 0
     )
@@ -153,9 +155,7 @@ def get_probabilistic_settings(
 
     pf_cfg = detail.get("probabilistic_forecast") or {}
     raw_quantiles = pf_cfg.get("quantiles") or fallback_quantiles
-    raw_max_ensemble_size = pf_cfg.get(
-        "max_ensemble_size", fallback_max_ensemble_size
-    )
+    raw_max_ensemble_size = pf_cfg.get("max_ensemble_size", fallback_max_ensemble_size)
 
     quantiles: List[float] = []
     for q in raw_quantiles:
@@ -171,6 +171,44 @@ def get_probabilistic_settings(
         max_ensemble_size = fallback_max_ensemble_size
 
     return quantiles, max(0, max_ensemble_size)
+
+
+def print_open_challenge_infos(challenge_infos: Dict[str, Any]) -> None:
+    """
+    Pretty-print the open challenge metadata returned by the API.
+    """
+    active = challenge_infos.get("active_challenges") or []
+    if not active:
+        print("No open challenges are currently reported by the API.")
+        return
+
+    generated_at = challenge_infos.get("generated_at")
+    if generated_at:
+        print(f"Open challenge metadata generated at: {generated_at}")
+        print()
+
+    for entry in active:
+        if not isinstance(entry, dict):
+            continue
+
+        challenge_id = str(entry.get("challenge_id", "unknown"))
+        challenge_name = str(entry.get("challenge_name", challenge_id))
+        areas = entry.get("areas") or []
+        deadline = entry.get("next_submission_deadline") or "unknown"
+        target_start = entry.get("next_target_start") or "unknown"
+        supported = "yes" if challenge_id in CHALLENGE_ENTSOE else "no"
+
+        print(f"{challenge_id} ({challenge_name})")
+        print(f"  starter repo support: {supported}")
+        print(f"  areas: {', '.join(str(area) for area in areas) if areas else '-'}")
+        print(f"  next submission deadline: {deadline}")
+        print(f"  next target start: {target_start}")
+
+        payload_example = entry.get("payload_example")
+        if isinstance(payload_example, dict):
+            print("  payload example:")
+            print(json.dumps(payload_example, indent=2))
+        print()
 
 
 def _extract_series_from_result(
@@ -213,7 +251,9 @@ def _extract_series_from_result(
         if isinstance(series, pd.DataFrame) and series.shape[1] == 1:
             series = series.iloc[:, 0]
         else:
-            raise RuntimeError(f"Expected pd.Series from {method_name}, got {type(series)}")
+            raise RuntimeError(
+                f"Expected pd.Series from {method_name}, got {type(series)}"
+            )
 
     if not isinstance(series.index, pd.DatetimeIndex):
         series.index = pd.to_datetime(series.index)
@@ -499,7 +539,9 @@ def submit(
     for attempt, delay in enumerate([0] + _RETRY_DELAYS, start=1):
         if delay:
             if verbose:
-                print(f"  Retrying in {delay}s (attempt {attempt}/{1 + len(_RETRY_DELAYS)})...")
+                print(
+                    f"  Retrying in {delay}s (attempt {attempt}/{1 + len(_RETRY_DELAYS)})..."
+                )
             time.sleep(delay)
         try:
             resp = requests.post(url, json=payload, headers=headers, timeout=30)
@@ -510,7 +552,9 @@ def submit(
                 return True
 
             detail = _extract_error_detail(resp)
-            last_message = f"HTTP {resp.status_code}" + (f" - {detail}" if detail else "")
+            last_message = f"HTTP {resp.status_code}" + (
+                f" - {detail}" if detail else ""
+            )
 
             if resp.status_code not in _TRANSIENT_STATUS_CODES:
                 break  # permanent error, no point retrying
@@ -536,8 +580,8 @@ def main() -> None:
     parser.add_argument(
         "--target_date",
         type=str,
-        required=True,
-        help="Target day in DD-MM-YYYY (e.g. 21-02-2026).",
+        default=None,
+        help="Target day in DD-MM-YYYY (e.g. 21-02-2026). Required unless --list_open_challenges is used.",
     )
     parser.add_argument(
         "--challenge_id",
@@ -580,6 +624,11 @@ def main() -> None:
         help="Build and print payload only; do not submit.",
     )
     parser.add_argument(
+        "--list_open_challenges",
+        action="store_true",
+        help="Fetch open challenge metadata from the Energy Arena API and exit.",
+    )
+    parser.add_argument(
         "--include_quantiles",
         action="store_true",
         help="Append quantiles estimated from historical analog values.",
@@ -597,6 +646,18 @@ def main() -> None:
         entsoe_key = entsoe_key or os.environ.get("ENTSOE_API_KEY", "").strip()
         arena_key = arena_key or os.environ.get("ARENA_API_KEY", "").strip()
 
+    if args.list_open_challenges:
+        try:
+            challenge_infos = get_challenge_infos(
+                args.api_base,
+                arena_api_key=arena_key or None,
+            )
+        except Exception as e:
+            print(f"Error: {type(e).__name__}: {e}", file=sys.stderr)
+            sys.exit(1)
+        print_open_challenge_infos(challenge_infos)
+        return
+
     if not entsoe_key:
         print(
             "Error: ENTSOE_API_KEY must be set in local .env "
@@ -608,6 +669,12 @@ def main() -> None:
         print(
             "Error: Arena API key required. Set ARENA_API_KEY in local .env, "
             "pass --api_key, or use --use_global_env.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not args.target_date:
+        print(
+            "Error: --target_date is required unless --list_open_challenges is used.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -633,6 +700,39 @@ def main() -> None:
         f"Target date: {target_date} | challenge: {args.challenge_id} | area: {args.area} | "
         f"ENTSO-E d-{lookback}{mode_suffix}"
     )
+
+    try:
+        active_lookup = get_active_challenge_lookup(
+            args.api_base,
+            arena_api_key=arena_key or None,
+        )
+    except Exception as e:
+        print(
+            f"Warning: failed to fetch open challenge metadata: {e}",
+            file=sys.stderr,
+        )
+    else:
+        current_info = active_lookup.get(args.challenge_id)
+        if current_info is None:
+            print(
+                f"Warning: challenge '{args.challenge_id}' is not currently listed by /api/v1/challenges/open.",
+                file=sys.stderr,
+            )
+        else:
+            active_areas = current_info.get("areas") or []
+            if args.area not in active_areas:
+                print(
+                    f"Warning: area '{args.area}' is not currently listed for challenge '{args.challenge_id}'. "
+                    f"API areas: {active_areas}",
+                    file=sys.stderr,
+                )
+            else:
+                next_deadline = current_info.get("next_submission_deadline")
+                next_target_start = current_info.get("next_target_start")
+                if next_deadline and next_target_start:
+                    print(
+                        f"API metadata: next deadline {next_deadline} | next target start {next_target_start}"
+                    )
 
     try:
         payload = build_payload_from_entsoe(

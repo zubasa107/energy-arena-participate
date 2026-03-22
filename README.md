@@ -59,7 +59,34 @@ Both scripts read `.env` automatically.
 
 Optional: allow fallback to global environment variables with `--use_global_env`.
 
-### 3) Submit one point forecast
+### 3) Inspect the currently open challenges
+
+```bash
+python submit_forecast.py --list_open_challenges
+```
+
+This calls the public `GET /api/v1/challenges/open` endpoint and prints:
+
+- active `challenge_id` values
+- valid `areas`
+- `next_submission_deadline`
+- `next_target_start`
+- a `payload_example`
+
+If you want the raw helper in your own Python code:
+
+```python
+import os
+
+from challenge_catalog import get_challenge_infos
+
+infos = get_challenge_infos(
+    os.environ.get("ARENA_API_BASE_URL", "https://api.energy-arena.org"),
+)
+print(infos["active_challenges"])
+```
+
+### 4) Submit one point forecast
 
 ```bash
 python submit_forecast.py --target_date 20-03-2026 --challenge_id day_ahead_price --area DE_LU
@@ -95,7 +122,7 @@ Example payload format:
 - `example_payload.txt` contains an actual `--dry_run` point payload for `2026-03-20` with `96` quarter-hour timestamps (`00:00` to `23:45`, `Europe/Berlin`).
 - `example_payload_probabilistic.txt` contains the matching actual `--dry_run --include_ensemble` payload for `2026-03-20`, with vector values ordered as `[point, q0.025, q0.25, q0.5, q0.75, q0.975, e1, ..., e10]`.
 
-### 4) Submit quantiles or ensembles optionally
+### 5) Submit quantiles or ensembles optionally
 
 Quantiles:
 
@@ -114,7 +141,7 @@ Notes:
 - quantile definitions and maximum ensemble size are pulled from the public challenge API when available, otherwise the local fallback mapping is used
 - for a first test, keep the default point-forecast mode and switch on probabilistic output afterwards
 
-### 5) Daily run at 11:30 CET (all 4 challenges x 2 areas)
+### 6) Daily run at 11:30 CET (all 4 challenges x 2 areas)
 
 ```bash
 python run_daily_submissions.py
@@ -146,6 +173,7 @@ python run_daily_submissions.py --use_global_env
 ## Repository layout
 
 - `submit_forecast.py` - single submission
+- `challenge_catalog.py` - helper for `GET /api/v1/challenges/open`
 - `run_daily_submissions.py` - daily batch submission
 - `run_daily_submissions.bat` / `run_daily_submissions.ps1` - scheduler-friendly launchers
 - `SCHEDULE.md` - scheduling reference (Windows + cron)
