@@ -38,8 +38,8 @@ def main() -> None:
     parser.add_argument(
         "--payload_path",
         type=str,
-        default="test_payload.txt",
-        help="Path to the saved payload file (default: test_payload.txt).",
+        default="test_payload.json",
+        help="Path to the saved payload file (default: test_payload.json).",
     )
     parser.add_argument(
         "--api_key",

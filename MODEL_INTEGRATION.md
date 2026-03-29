@@ -108,7 +108,7 @@ Why this is safest:
 Before sending real submissions:
 
 1. Run `python run_forecast_model.py --list_open_challenges`
-2. Run `python run_forecast_model.py --target_date DD-MM-YYYY --challenge_id X --save_payload test_payload.txt`
+2. Run `python run_forecast_model.py --target_date DD-MM-YYYY --challenge_id X --save_payload test_payload.json`
 3. Open the saved payload and inspect it
-4. Run `python submit_forecast_to_energy_arena.py --payload_path test_payload.txt`
+4. Run `python submit_forecast_to_energy_arena.py --payload_path test_payload.json`
 5. Only then switch on daily automation

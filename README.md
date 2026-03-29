@@ -57,7 +57,7 @@ This prints:
 ### 4. Generate one local forecast
 
 ```bash
-python run_forecast_model.py --target_date 27-03-2026 --challenge_id 1 --save_payload test_payload.txt
+python run_forecast_model.py --target_date 27-03-2026 --challenge_id 1 --save_payload test_payload.json
 ```
 
 What this does:
@@ -72,13 +72,13 @@ Current challenges are usually single-area, so you normally do not need `--area`
 If you explicitly want ENTSO-E instead of the default SMARD baseline:
 
 ```bash
-python run_forecast_model.py --target_date 27-03-2026 --challenge_id 1 --data_source entsoe --save_payload test_payload.txt
+python run_forecast_model.py --target_date 27-03-2026 --challenge_id 1 --data_source entsoe --save_payload test_payload.json
 ```
 
 ### 5. Submit the saved payload
 
 ```bash
-python submit_forecast_to_energy_arena.py --payload_path test_payload.txt
+python submit_forecast_to_energy_arena.py --payload_path test_payload.json
 ```
 
 What this does:

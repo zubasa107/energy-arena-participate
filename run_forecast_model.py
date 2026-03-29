@@ -78,8 +78,8 @@ def main() -> None:
     parser.add_argument(
         "--save_payload",
         type=str,
-        default="test_payload.txt",
-        help="Write the generated payload to a local JSON text file (default: test_payload.txt).",
+        default="test_payload.json",
+        help="Write the generated payload to a local JSON file (default: test_payload.json).",
     )
     parser.add_argument(
         "--use_global_env",

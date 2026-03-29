@@ -488,10 +488,10 @@ def run_setup_check(
     print("  1. python run_forecast_model.py --list_open_challenges")
     print(
         "  2. python run_forecast_model.py --target_date DD-MM-YYYY "
-        "--challenge_id <challenge_id> --save_payload test_payload.txt"
+        "--challenge_id <challenge_id> --save_payload test_payload.json"
     )
     print(
-        "  3. python submit_forecast_to_energy_arena.py --payload_path test_payload.txt"
+        "  3. python submit_forecast_to_energy_arena.py --payload_path test_payload.json"
     )
     return 0
 
