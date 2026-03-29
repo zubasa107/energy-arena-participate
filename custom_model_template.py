@@ -1,8 +1,8 @@
 """
 Copy this file to custom_model.py and edit transform_payload(...).
 
-submit_forecast.py and run_daily_submissions.py automatically load
-custom_model.py if it exists in the repository root.
+naiv_model.py, submit_forecast.py, and run_daily_submissions.py automatically
+load custom_model.py if it exists in the repository root.
 
 The incoming payload already has:
 - the correct challenge_id

@@ -16,22 +16,23 @@ Recommended path:
 1. copy `custom_model_template.py` to `custom_model.py`
 2. edit `transform_payload(...)`
 
-Both `submit_forecast.py` and `run_daily_submissions.py` automatically load
-`custom_model.py` if it exists.
+Both `naiv_model.py` and `run_daily_submissions.py` automatically load
+`custom_model.py` if it exists. `submit_payload.py` only sends the saved payload
+and does not modify it.
 
 Internally both scripts go through the same shared hook:
 
-- `submit_forecast.py` -> `build_payload(...)`
+- `naiv_model.py` -> `build_payload(...)`
 - `run_daily_submissions.py` -> `build_payload(...)`
 
 ## Recommended procedure
 
 1. Run the baseline once unchanged.
-2. Confirm one successful `--dry_run` and one successful real submission.
+2. Confirm one successful local payload generation and one successful real submission.
 3. Copy `custom_model_template.py` to `custom_model.py`.
 4. Edit `transform_payload(...)` with your own model logic.
 5. Keep the payload contract unchanged.
-6. Validate with `--dry_run --save_payload ...` before sending real submissions.
+6. Validate by generating and inspecting a saved payload before sending real submissions.
 7. After one manual run works, daily automation uses the same hook automatically.
 
 Copy examples:
@@ -113,8 +114,8 @@ and still respect the challenge-specific format.
 
 Before sending real submissions:
 
-1. Run `python submit_forecast.py --list_open_challenges`
-2. Run `python submit_forecast.py --target_date DD-MM-YYYY --challenge_id X --dry_run --save_payload test_payload.txt`
+1. Run `python naiv_model.py --list_open_challenges`
+2. Run `python naiv_model.py --target_date DD-MM-YYYY --challenge_id X --save_payload test_payload.txt`
 3. Open the saved payload and inspect the target day plus value shapes
-4. Submit one manual forecast
+4. Run `python submit_payload.py --payload_path test_payload.txt`
 5. Only then switch on daily automation

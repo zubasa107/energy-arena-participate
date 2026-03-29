@@ -1,15 +1,19 @@
 # Energy Arena Participate
 
-Submit forecasts to Energy Arena with one local Python script.
+Generate a local forecast payload first and then submit it to Energy Arena.
 
 The built-in baseline is now **SMARD-first**:
 
 - default: `smard` baseline, no extra data key required
 - optional: `entsoe` baseline, requires `ENTSOE_API_KEY`
 
-The script resolves the selected challenge from the live Energy Arena API, reads
-its accepted forecast format, and then builds the payload automatically for
-point, quantile, or ensemble challenges.
+The starter flow is now split into two manual steps:
+
+- `naiv_model.py` resolves the selected challenge and generates a local payload
+- `submit_payload.py` submits that saved payload to Energy Arena via API POST
+
+The payload format is still derived automatically from the selected challenge,
+so point, quantile, and ensemble challenges use the correct shape.
 
 ## What you need for a first submission
 
@@ -23,18 +27,17 @@ Use this flow for the shortest route to a first successful submission:
 
 1. Copy `.env.example` to `.env`
 2. Fill `ARENA_API_KEY`
-3. Run `python submit_forecast.py --check_setup`
-4. Run `python submit_forecast.py --list_open_challenges`
-5. Do one dry run
-6. Submit one real forecast
+3. Run `python naiv_model.py --list_open_challenges`
+4. Generate one local payload
+5. Inspect the saved payload
+6. Submit the payload to Energy Arena
 
 Minimal commands:
 
 ```bash
-python submit_forecast.py --check_setup
-python submit_forecast.py --list_open_challenges
-python submit_forecast.py --target_date 27-03-2026 --challenge_id 1 --dry_run --save_payload test_payload.txt
-python submit_forecast.py --target_date 27-03-2026 --challenge_id 1
+python naiv_model.py --list_open_challenges
+python naiv_model.py --target_date 27-03-2026 --challenge_id 1 --save_payload test_payload.txt
+python submit_payload.py --payload_path test_payload.txt
 ```
 
 ## Quick start
@@ -78,10 +81,10 @@ BASELINE_DATA_SOURCE=smard
 
 Both scripts read `.env` automatically.
 
-### 3) Check your setup
+### 3) Optional: check your setup
 
 ```bash
-python submit_forecast.py --check_setup
+python naiv_model.py --check_setup
 ```
 
 This verifies:
@@ -95,7 +98,7 @@ This verifies:
 ### 4) Inspect open challenges
 
 ```bash
-python submit_forecast.py --list_open_challenges
+python naiv_model.py --list_open_challenges
 ```
 
 The table shows:
@@ -110,42 +113,43 @@ The table shows:
 
 Use one of the printed `challenge_id` values in the next step.
 
-### 5) Submit one forecast
+### 5) Generate one local forecast payload
 
 ```bash
-python submit_forecast.py --target_date 27-03-2026 --challenge_id 1
+python naiv_model.py --target_date 27-03-2026 --challenge_id 1 --save_payload test_payload.txt
 ```
 
 Notes:
 
 - `target_date` must be tomorrow's date for day-ahead challenges
 - the script resolves the challenge format automatically
-- the preferred submission payload is compact: `challenge_id + target_date + values`
+- the preferred payload is compact: `challenge_id + target_date + values`
 - for current single-area challenges, you normally do **not** need `--area`
-- the built-in baseline uses `smard` by default
-
-Dry run:
-
-```bash
-python submit_forecast.py --target_date 27-03-2026 --challenge_id 1 --dry_run
-```
-
-Dry run and save locally:
-
-```bash
-python submit_forecast.py --target_date 27-03-2026 --challenge_id 1 --dry_run --save_payload payload.txt
-```
+- the built-in naive baseline uses `smard` by default
+- the command saves the generated payload locally and does not submit yet
 
 Optional ENTSO-E mode:
 
 ```bash
-python submit_forecast.py --target_date 27-03-2026 --challenge_id 1 --data_source entsoe
+python naiv_model.py --target_date 27-03-2026 --challenge_id 1 --data_source entsoe --save_payload test_payload.txt
 ```
 
 Use this only if:
 
 - the selected challenge does not expose a confirmed SMARD counterpart, or
 - you explicitly want to build the baseline from ENTSO-E data
+
+### 6) Submit the saved payload
+
+```bash
+python submit_payload.py --payload_path test_payload.txt
+```
+
+Notes:
+
+- this sends the saved JSON payload to Energy Arena via API POST
+- the payload is stored first and then evaluated later once realized target data is available
+- after submitting, check the dashboard for the new entry and its current status
 
 ## Current built-in baseline behavior
 
@@ -172,7 +176,7 @@ If you want to replace the built-in baseline with your own model:
 
 1. Copy `custom_model_template.py` to `custom_model.py`
 2. Edit `transform_payload(...)`
-3. Validate with `--dry_run --save_payload ...`
+3. Validate by generating one local payload
 4. Submit one manual forecast
 5. Only then enable daily automation
 
@@ -219,7 +223,9 @@ those challenge ids directly instead of relying on a hardcoded local list.
 
 ## Repository layout
 
-- `submit_forecast.py` - single submission
+- `naiv_model.py` - generate one local payload with the starter model
+- `submit_payload.py` - submit a saved payload via API POST
+- `submit_forecast.py` - legacy combined helper for build-and-submit in one command
 - `run_daily_submissions.py` - batch submission for open challenges
 - `challenge_catalog.py` - challenge discovery helpers
 - `custom_model_template.py` - starter hook for your own model

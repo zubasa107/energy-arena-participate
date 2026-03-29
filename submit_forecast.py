@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Submit one forecast to the Energy Arena from a local machine.
+Legacy combined helper: generate one forecast payload and submit it to Energy
+Arena from a local machine.
 
 Default baseline source:
   - SMARD public market data (no extra key required)
@@ -291,51 +292,33 @@ def print_open_challenge_infos(
         "Target",
         "Area",
         "Forecast Format",
-        "Baseline Source",
         "Next Submission Deadline",
         "Next Target Start",
     )
-    rows: List[tuple[str, str, str, str, str, str, str]] = []
+    rows: List[tuple[str, str, str, str, str, str]] = []
 
     for entry in active:
         if not isinstance(entry, dict):
             continue
         challenge_id = str(entry.get("challenge_id") or "").strip()
-        challenge_name = str(entry.get("challenge_name") or challenge_id).strip()
+        target_name = str(
+            entry.get("target_name")
+            or (entry.get("catalog_metadata") or {}).get("target_name")
+            or entry.get("challenge_name")
+            or challenge_id
+        ).strip()
         areas = [str(area).strip() for area in (entry.get("areas") or []) if str(area).strip()]
         area_label = areas[0] if len(areas) == 1 else ", ".join(areas) if areas else "-"
         forecast_format = str(entry.get("accepted_forecast_format") or "-").strip()
         deadline = str(entry.get("next_submission_deadline") or "-").strip()
         target_start = str(entry.get("next_target_start") or "-").strip()
 
-        baseline_source = "-"
-        if challenge_id:
-            try:
-                detail = get_challenge_detail(
-                    api_base,
-                    challenge_id,
-                    arena_api_key=arena_api_key,
-                )
-            except Exception:
-                detail = None
-            if isinstance(detail, dict):
-                target_code = str(
-                    detail.get("target_code")
-                    or (detail.get("catalog_metadata") or {}).get("target_code")
-                    or ""
-                ).strip()
-                if detail.get("smard_counterpart"):
-                    baseline_source = "smard"
-                elif target_code in TARGET_BASELINES:
-                    baseline_source = "entsoe"
-
         rows.append(
             (
                 challenge_id or "-",
-                challenge_name or "-",
+                target_name or "-",
                 area_label,
                 forecast_format,
-                baseline_source,
                 deadline,
                 target_start,
             )
@@ -353,10 +336,25 @@ def print_open_challenge_infos(
 
 
 def save_payload_to_file(payload: dict, output_path: str) -> Path:
+    ordered_keys = [
+        "challenge_id",
+        "area",
+        "target_date",
+        "target_start",
+        "values",
+        "points",
+    ]
+    ordered_payload = {
+        key: payload[key] for key in ordered_keys if key in payload
+    }
+    for key, value in payload.items():
+        if key not in ordered_payload:
+            ordered_payload[key] = value
+
     path = Path(output_path).expanduser()
     if path.parent and str(path.parent) not in ("", "."):
         path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    path.write_text(json.dumps(ordered_payload, indent=2) + "\n", encoding="utf-8")
     return path.resolve()
 
 
@@ -481,20 +479,19 @@ def run_setup_check(
             print("  3. Fill ENTSOE_API_KEY or switch to --data_source smard")
         else:
             print("  3. Optionally add ENTSOE_API_KEY if you want --data_source entsoe")
-        print("  4. Run python submit_forecast.py --check_setup again")
+        print("  4. Run python naiv_model.py --check_setup again")
         return 1
 
     print("Setup looks good.")
     print()
     print("Suggested next steps:")
-    print("  1. python submit_forecast.py --list_open_challenges")
+    print("  1. python naiv_model.py --list_open_challenges")
     print(
-        "  2. python submit_forecast.py --target_date DD-MM-YYYY "
-        "--challenge_id <challenge_id> --dry_run --save_payload test_payload.txt"
+        "  2. python naiv_model.py --target_date DD-MM-YYYY "
+        "--challenge_id <challenge_id> --save_payload test_payload.txt"
     )
     print(
-        "  3. python submit_forecast.py --target_date DD-MM-YYYY "
-        "--challenge_id <challenge_id>"
+        "  3. python submit_payload.py --payload_path test_payload.txt"
     )
     return 0
 
@@ -1093,7 +1090,7 @@ def main() -> None:
         "--challenge_id",
         type=str,
         default="",
-        help="Challenge id from python submit_forecast.py --list_open_challenges.",
+        help="Challenge id from python naiv_model.py --list_open_challenges.",
     )
     parser.add_argument(
         "--area",
