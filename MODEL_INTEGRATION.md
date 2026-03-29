@@ -1,13 +1,12 @@
 # Model Integration
 
-The starter repository is split into three parts:
+The starter repository is intentionally split into clear steps:
 
-1. challenge discovery
-2. payload generation
-3. payload submission
+1. inspect or load the source data
+2. generate a local payload
+3. submit the payload
 
-If you want to use your own model, change only the payload generation step and
-leave challenge lookup plus submission flow untouched.
+If you want to use your own model, change only the payload-generation step and leave challenge lookup plus submission flow untouched.
 
 ## Recommended integration point
 
@@ -16,24 +15,35 @@ Recommended path:
 1. copy `custom_model_template.py` to `custom_model.py`
 2. edit `transform_payload(...)`
 
-Both `naiv_model.py` and `run_daily_submissions.py` automatically load
-`custom_model.py` if it exists. `submit_payload.py` only sends the saved payload
-and does not modify it.
+The following scripts automatically load `custom_model.py` if it exists:
 
-Internally both scripts go through the same shared hook:
+- `run_forecast_model.py`
+- `master.py`
+- `run_daily_submissions.py`
 
-- `naiv_model.py` -> `build_payload(...)`
+`submit_forecast_to_energy_arena.py` only sends the saved payload and does not modify it.
+
+Internally all forecast-generation paths still go through the same shared hook:
+
+- `run_forecast_model.py` -> `build_payload(...)`
+- `master.py` -> `build_payload(...)`
 - `run_daily_submissions.py` -> `build_payload(...)`
+
+Compatibility aliases still exist:
+
+- `naiv_model.py` -> `run_forecast_model.py`
+- `submit_payload.py` -> `submit_forecast_to_energy_arena.py`
 
 ## Recommended procedure
 
 1. Run the baseline once unchanged.
-2. Confirm one successful local payload generation and one successful real submission.
-3. Copy `custom_model_template.py` to `custom_model.py`.
-4. Edit `transform_payload(...)` with your own model logic.
-5. Keep the payload contract unchanged.
-6. Validate by generating and inspecting a saved payload before sending real submissions.
-7. After one manual run works, daily automation uses the same hook automatically.
+2. Confirm one successful local payload generation.
+3. Confirm one successful real submission.
+4. Copy `custom_model_template.py` to `custom_model.py`.
+5. Edit `transform_payload(...)` with your own model logic.
+6. Keep the payload contract unchanged.
+7. Validate by generating and inspecting a saved payload before sending real submissions.
+8. After one manual run works, daily automation uses the same hook automatically.
 
 Copy examples:
 
@@ -47,8 +57,7 @@ cp custom_model_template.py custom_model.py
 
 ## Payload contract
 
-The safest pattern is to keep the incoming payload structure and replace only
-the values in `payload["values"]`.
+The safest pattern is to keep the incoming payload structure and replace only the values in `payload["values"]`.
 
 Current payload rules:
 
@@ -104,18 +113,16 @@ Why this is the safest pattern:
 
 ## Full override
 
-If you do not want to start from the built-in baseline at all, define
-`build_payload(...)` in `custom_model.py` instead of `transform_payload(...)`.
+If you do not want to start from the built-in baseline at all, define `build_payload(...)` in `custom_model.py` instead of `transform_payload(...)`.
 
-That gives you full control, but then you must build the full payload yourself
-and still respect the challenge-specific format.
+That gives you full control, but then you must build the full payload yourself and still respect the challenge-specific format.
 
 ## Validation checklist
 
 Before sending real submissions:
 
-1. Run `python naiv_model.py --list_open_challenges`
-2. Run `python naiv_model.py --target_date DD-MM-YYYY --challenge_id X --save_payload test_payload.txt`
+1. Run `python run_forecast_model.py --list_open_challenges`
+2. Run `python run_forecast_model.py --target_date DD-MM-YYYY --challenge_id X --save_payload test_payload.txt`
 3. Open the saved payload and inspect the target day plus value shapes
-4. Run `python submit_payload.py --payload_path test_payload.txt`
+4. Run `python submit_forecast_to_energy_arena.py --payload_path test_payload.txt`
 5. Only then switch on daily automation

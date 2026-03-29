@@ -479,19 +479,19 @@ def run_setup_check(
             print("  3. Fill ENTSOE_API_KEY or switch to --data_source smard")
         else:
             print("  3. Optionally add ENTSOE_API_KEY if you want --data_source entsoe")
-        print("  4. Run python naiv_model.py --check_setup again")
+        print("  4. Run python run_forecast_model.py --check_setup again")
         return 1
 
     print("Setup looks good.")
     print()
     print("Suggested next steps:")
-    print("  1. python naiv_model.py --list_open_challenges")
+    print("  1. python run_forecast_model.py --list_open_challenges")
     print(
-        "  2. python naiv_model.py --target_date DD-MM-YYYY "
+        "  2. python run_forecast_model.py --target_date DD-MM-YYYY "
         "--challenge_id <challenge_id> --save_payload test_payload.txt"
     )
     print(
-        "  3. python submit_payload.py --payload_path test_payload.txt"
+        "  3. python submit_forecast_to_energy_arena.py --payload_path test_payload.txt"
     )
     return 0
 
@@ -1090,7 +1090,7 @@ def main() -> None:
         "--challenge_id",
         type=str,
         default="",
-        help="Challenge id from python naiv_model.py --list_open_challenges.",
+        help="Challenge id from python run_forecast_model.py --list_open_challenges.",
     )
     parser.add_argument(
         "--area",
