@@ -70,5 +70,5 @@ If you want ENTSO-E instead of the default SMARD baseline, append
 python run_daily_submissions.py --dry_run
 ```
 
-Without `--target_date`, the runner uses each selected challenge's
-`next_target_start` from the open challenge API.
+Without `--target_start` or `--target_date`, the runner uses each selected
+challenge's `next_target_start` from the open challenge API.

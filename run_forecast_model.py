@@ -18,7 +18,7 @@ import sys
 from _challenge_catalog import (
     get_active_challenge_lookup,
     get_challenge_infos,
-    resolve_target_date_from_entry,
+    resolve_target_start_from_entry,
 )
 from _starter_core import (
     DEFAULT_API_BASE,
@@ -27,6 +27,7 @@ from _starter_core import (
     _normalized_data_source,
     build_payload,
     parse_target_date,
+    parse_target_start,
     print_open_challenge_infos,
     run_setup_check,
     save_payload_to_file,
@@ -43,8 +44,18 @@ def main() -> None:
         type=str,
         default=None,
         help=(
-            "Target day in DD-MM-YYYY. If omitted, the script uses the selected "
-            "challenge's next_target_start from --list_open_challenges."
+            "Calendar-day shortcut in DD-MM-YYYY. Prefer --target_start for new "
+            "work. If both target arguments are omitted, the script uses the "
+            "selected challenge's next_target_start from --list_open_challenges."
+        ),
+    )
+    parser.add_argument(
+        "--target_start",
+        type=str,
+        default=None,
+        help=(
+            "Canonical target-period start in ISO8601 with timezone, for example "
+            "2026-03-27T00:00:00+01:00. Preferred over --target_date."
         ),
     )
     parser.add_argument(
@@ -152,9 +163,23 @@ def main() -> None:
         )
         sys.exit(1)
     challenge_id = str(args.challenge_id).strip()
+    if args.target_date and args.target_start:
+        print(
+            "Error: pass either --target_date or --target_start, not both.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     active_lookup = None
-    if args.target_date:
+    target_date = None
+    target_start = None
+    if args.target_start:
+        try:
+            target_start = parse_target_start(args.target_start)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+    elif args.target_date:
         try:
             target_date = parse_target_date(args.target_date)
         except ValueError as exc:
@@ -168,7 +193,7 @@ def main() -> None:
             )
         except Exception as exc:
             print(
-                "Error: --target_date was omitted and open challenge metadata "
+                "Error: no target override was passed and open challenge metadata "
                 f"could not be loaded: {exc}",
                 file=sys.stderr,
             )
@@ -177,31 +202,32 @@ def main() -> None:
         current_info = active_lookup.get(challenge_id)
         if current_info is None:
             print(
-                "Error: --target_date was omitted, but challenge "
+                "Error: no target override was passed, but challenge "
                 f"'{challenge_id}' is not currently listed by /api/v1/challenges/open. "
-                "Pass --target_date explicitly.",
+                "Pass --target_start or --target_date explicitly.",
                 file=sys.stderr,
             )
             sys.exit(1)
 
-        target_date = resolve_target_date_from_entry(current_info)
+        target_start = resolve_target_start_from_entry(current_info)
         next_target_start = str(current_info.get("next_target_start") or "").strip()
-        if target_date is None:
+        if target_start is None:
             print(
-                "Error: --target_date was omitted, but challenge "
+                "Error: no target override was passed, but challenge "
                 f"'{challenge_id}' does not expose a parseable next_target_start "
-                "in /api/v1/challenges/open. Pass --target_date explicitly.",
+                "in /api/v1/challenges/open. Pass --target_start or --target_date explicitly.",
                 file=sys.stderr,
             )
             sys.exit(1)
         print(
-            f"Target date defaulted to {target_date} from API next_target_start "
+            f"Target start defaulted to {target_start.isoformat()} from API next_target_start "
             f"{next_target_start}"
         )
 
     try:
         payload = build_payload(
             target_date=target_date,
+            target_start=target_start,
             challenge_id=challenge_id,
             area=args.area or None,
             entsoe_api_key=entsoe_key,
@@ -227,10 +253,10 @@ def main() -> None:
         "Local forecast payload created successfully "
         f"(challenge_id={payload.get('challenge_id')}, file={saved_path})."
     )
-    if "target_date" in payload:
-        print(f"Target date: {payload['target_date']}")
     if "target_start" in payload:
         print(f"Target start: {payload['target_start']}")
+    if "target_date" in payload:
+        print(f"Target date: {payload['target_date']}")
     print(
         "No submission was sent. Inspect the file and then use "
         "submit_forecast_to_energy_arena.py."

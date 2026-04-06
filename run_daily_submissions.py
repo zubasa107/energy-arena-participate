@@ -2,7 +2,7 @@
 """
 Run daily submissions for all currently open challenges.
 
-Default target date: each selected challenge's next_target_start from the open
+Default target start: each selected challenge's next_target_start from the open
 challenge API response.
 """
 
@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from _challenge_catalog import (  # noqa: E402
     get_challenge_infos,
-    resolve_target_date_from_entry,
+    resolve_target_start_from_entry,
 )
 from _starter_core import (  # noqa: E402
     DEFAULT_API_BASE,
@@ -27,6 +27,7 @@ from _starter_core import (  # noqa: E402
     _normalized_data_source,
     build_payload,
     parse_target_date,
+    parse_target_start,
     save_payload_to_file,
     submit,
 )
@@ -53,13 +54,18 @@ def _archive_payload(
     payload: dict,
     challenge_id: str,
     area: str | None,
-    target_date: date,
     dry_run: bool,
 ) -> Path:
     archive_root = _payload_archive_root()
     challenge_dir = archive_root / f"challenge_{_safe_name_fragment(challenge_id)}"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    filename_parts = [timestamp, f"target_date_{target_date.isoformat()}"]
+    target_start = str(payload.get("target_start") or "").strip()
+    target_date = str(payload.get("target_date") or "").strip()
+    filename_parts = [timestamp]
+    if target_start:
+        filename_parts.append(f"target_start_{_safe_name_fragment(target_start)}")
+    elif target_date:
+        filename_parts.append(f"target_date_{_safe_name_fragment(target_date)}")
     area_part = _safe_name_fragment(area)
     if area_part:
         filename_parts.append(f"area_{area_part}")
@@ -79,8 +85,18 @@ def main() -> None:
         type=str,
         default=None,
         help=(
-            "Target day DD-MM-YYYY. If omitted, each challenge uses its "
+            "Calendar-day shortcut in DD-MM-YYYY. Prefer --target_start for new "
+            "work. If both target arguments are omitted, each challenge uses its "
             "next_target_start from the open challenge API."
+        ),
+    )
+    parser.add_argument(
+        "--target_start",
+        type=str,
+        default=None,
+        help=(
+            "Canonical target-period start in ISO8601 with timezone. When set, "
+            "all selected challenges use this same target_start override."
         ),
     )
     parser.add_argument(
@@ -124,6 +140,12 @@ def main() -> None:
             "Each challenge now defines its own forecast objective.",
             file=sys.stderr,
         )
+    if args.target_date and args.target_start:
+        print(
+            "Error: pass either --target_date or --target_start, not both.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
     data_source = _normalized_data_source(args.data_source)
     entsoe_key = local_env.get("ENTSOE_API_KEY", "").strip()
@@ -153,9 +175,16 @@ def main() -> None:
         sys.exit(1)
 
     explicit_target_date: date | None = None
+    explicit_target_start = None
     if args.target_date:
         try:
             explicit_target_date = parse_target_date(args.target_date)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+    if args.target_start:
+        try:
+            explicit_target_start = parse_target_start(args.target_start)
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             sys.exit(1)
@@ -184,14 +213,19 @@ def main() -> None:
         return
 
     challenge_ids = [str(entry.get("challenge_id") or "").strip() for entry in active_entries]
-    if explicit_target_date is not None:
+    if explicit_target_start is not None:
+        print(
+            f"Target start override: {explicit_target_start.isoformat()} | source: {data_source} | "
+            f"challenges: {challenge_ids}"
+        )
+    elif explicit_target_date is not None:
         print(
             f"Target date override: {explicit_target_date} | source: {data_source} | "
             f"challenges: {challenge_ids}"
         )
     else:
         print(
-            "Target date default: per challenge from API next_target_start | "
+            "Target start default: per challenge from API next_target_start | "
             f"source: {data_source} | challenges: {challenge_ids}"
         )
     if args.dry_run:
@@ -200,53 +234,67 @@ def main() -> None:
 
     ok_count = 0
     fail_count = 0
-    work_items: list[tuple[dict, date]] = []
+    work_items: list[tuple[dict, date | None, datetime | None]] = []
     for entry in active_entries:
         challenge_id = str(entry.get("challenge_id") or "").strip()
         next_target_start = str(entry.get("next_target_start") or "").strip()
+        if explicit_target_start is not None:
+            work_items.append((entry, None, explicit_target_start))
+            print(
+                f"Challenge {challenge_id}: target_start={explicit_target_start.isoformat()}"
+            )
+            continue
         if explicit_target_date is not None:
             target_date = explicit_target_date
         else:
-            target_date = resolve_target_date_from_entry(entry)
-            if target_date is None:
+            target_start = resolve_target_start_from_entry(entry)
+            if target_start is None:
                 print(
                     "  FAIL "
                     f"{challenge_id}: open challenge metadata does not expose a "
-                    "parseable next_target_start. Pass --target_date explicitly. "
+                    "parseable next_target_start. Pass --target_start or --target_date explicitly. "
                     f"(next_target_start={next_target_start or '-'})",
                     file=sys.stderr,
                 )
                 fail_count += 1
                 continue
             print(
-                f"Challenge {challenge_id}: target_date={target_date} "
+                f"Challenge {challenge_id}: target_start={target_start.isoformat()} "
                 f"(next_target_start={next_target_start})"
             )
-        work_items.append((entry, target_date))
+            work_items.append((entry, None, target_start))
+            continue
+        work_items.append((entry, target_date, None))
 
-    if explicit_target_date is not None:
+    if explicit_target_start is not None:
+        print(f"All selected challenges use target_start={explicit_target_start.isoformat()}")
+        print()
+    elif explicit_target_date is not None:
         print(f"All selected challenges use target_date={explicit_target_date}")
         print()
     elif work_items:
         print()
 
     if not work_items:
-        print("No challenges with a usable target date were found.")
+        print("No challenges with a usable target start were found.")
         if fail_count and not args.dry_run:
             sys.exit(1)
         return
 
-    for entry, target_date in work_items:
+    for entry, target_date, target_start in work_items:
         challenge_id = str(entry.get("challenge_id") or "").strip()
         areas = [str(area).strip() for area in (entry.get("areas") or []) if str(area).strip()]
         area = areas[0] if areas else None
-        print(
-            f"Running challenge {challenge_id} | area: {area or '-'} | "
-            f"target_date: {target_date}"
+        target_label = (
+            f"target_start: {target_start.isoformat()}"
+            if target_start is not None
+            else f"target_date: {target_date}"
         )
+        print(f"Running challenge {challenge_id} | area: {area or '-'} | {target_label}")
         try:
             payload = build_payload(
                 target_date=target_date,
+                target_start=target_start,
                 challenge_id=challenge_id,
                 area=area,
                 entsoe_api_key=entsoe_key,
@@ -258,7 +306,6 @@ def main() -> None:
                 payload=payload,
                 challenge_id=challenge_id,
                 area=area,
-                target_date=target_date,
                 dry_run=args.dry_run,
             )
             print(f"  Saved payload archive: {archive_path}")

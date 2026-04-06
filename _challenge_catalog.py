@@ -87,11 +87,18 @@ def parse_catalog_datetime(raw: Any) -> datetime | None:
         return None
 
 
+def resolve_target_start_from_entry(entry: Dict[str, Any]) -> datetime | None:
+    """
+    Return the canonical ``next_target_start`` timestamp for one open challenge.
+    """
+    return parse_catalog_datetime(entry.get("next_target_start"))
+
+
 def resolve_target_date_from_entry(entry: Dict[str, Any]) -> date | None:
     """
     Return the target date implied by ``next_target_start`` for one open challenge.
     """
-    next_target_start = parse_catalog_datetime(entry.get("next_target_start"))
+    next_target_start = resolve_target_start_from_entry(entry)
     if next_target_start is None:
         return None
     return next_target_start.date()

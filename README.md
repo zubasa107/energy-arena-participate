@@ -57,15 +57,19 @@ This prints:
 ### 4. Generate one local forecast
 
 ```bash
-python run_forecast_model.py --target_date 27-03-2026 --challenge_id 1 --save_payload test_payload.json
+python run_forecast_model.py --target_start 2026-03-27T00:00:00+01:00 --challenge_id 1 --save_payload test_payload.json
 ```
 
-If you omit `--target_date`, the script uses the selected challenge's
-`Next Target Start` date from `--list_open_challenges` automatically:
+If you omit both `--target_start` and `--target_date`, the script uses the selected challenge's
+`Next Target Start` from `--list_open_challenges` automatically:
 
 ```bash
 python run_forecast_model.py --challenge_id 1 --save_payload test_payload.json
 ```
+
+For current calendar-day challenges, `--target_date DD-MM-YYYY` is still accepted
+as a convenience shortcut, but generated payloads are anchored by
+`challenge_id + target_start`.
 
 What this does:
 
@@ -79,7 +83,7 @@ Current challenges are usually single-area, so you normally do not need `--area`
 If you explicitly want ENTSO-E instead of the default SMARD baseline:
 
 ```bash
-python run_forecast_model.py --target_date 27-03-2026 --challenge_id 1 --data_source entsoe --save_payload test_payload.json
+python run_forecast_model.py --target_start 2026-03-27T00:00:00+01:00 --challenge_id 1 --data_source entsoe --save_payload test_payload.json
 ```
 
 ### 5. Submit the saved payload
@@ -157,8 +161,8 @@ Detailed notes:
 python run_daily_submissions.py
 ```
 
-Without `--target_date`, each selected challenge uses its own
-`next_target_start` from the open challenge API.
+Without `--target_start` or `--target_date`, each selected challenge uses its
+own `next_target_start` from the open challenge API.
 
 Each generated payload is also archived automatically under
 `.\submitted_payloads\challenge_<id>\`.
@@ -167,6 +171,7 @@ Optional examples:
 
 ```bash
 python run_daily_submissions.py --dry_run
+python run_daily_submissions.py --target_start 2026-03-27T00:00:00+01:00
 python run_daily_submissions.py --target_date 27-03-2026
 python run_daily_submissions.py --challenge_id 1
 python run_daily_submissions.py --data_source entsoe

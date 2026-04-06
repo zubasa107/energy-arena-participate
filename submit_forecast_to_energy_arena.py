@@ -85,10 +85,10 @@ def main() -> None:
         f"Submitting payload from {Path(args.payload_path).expanduser()} "
         f"(challenge_id={payload.get('challenge_id')})"
     )
-    if "target_date" in payload:
-        print(f"Target date: {payload['target_date']}")
     if "target_start" in payload:
         print(f"Target start: {payload['target_start']}")
+    if "target_date" in payload:
+        print(f"Target date: {payload['target_date']}")
 
     ok = submit(
         payload=payload,

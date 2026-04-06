@@ -125,6 +125,79 @@ def parse_target_date(raw: str) -> date:
     return date(year, month, day)
 
 
+def parse_target_start(raw: str) -> datetime:
+    text = str(raw or "").strip()
+    if not text:
+        raise ValueError("target_start must be an ISO8601 datetime string.")
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as exc:
+        raise ValueError(
+            f"target_start must be ISO8601 with timezone, got {raw!r}"
+        ) from exc
+    if parsed.tzinfo is None:
+        raise ValueError("target_start must include a timezone offset.")
+    return parsed
+
+
+def _target_timezone_for_context(context: ChallengeContext) -> ZoneInfo:
+    tz_name = context.target_period_timezone or context.reference_timezone or DEFAULT_TIMEZONE
+    return ZoneInfo(tz_name)
+
+
+def _canonical_target_start_for_date(
+    *,
+    context: ChallengeContext,
+    target_date: date,
+) -> datetime:
+    tz = _target_timezone_for_context(context)
+    return datetime(
+        target_date.year,
+        target_date.month,
+        target_date.day,
+        0,
+        0,
+        0,
+        tzinfo=tz,
+    )
+
+
+def _target_date_from_target_start(
+    *,
+    context: ChallengeContext,
+    target_start: datetime,
+) -> date:
+    return target_start.astimezone(_target_timezone_for_context(context)).date()
+
+
+def _resolve_requested_target_start(
+    *,
+    context: ChallengeContext,
+    target_date: date | None,
+    target_start: datetime | None,
+) -> datetime:
+    if target_start is not None:
+        localized = target_start.astimezone(_target_timezone_for_context(context))
+        if context.target_period_type.lower() == "calendar_day":
+            return _canonical_target_start_for_date(
+                context=context,
+                target_date=localized.date(),
+            )
+        return localized
+
+    if target_date is None:
+        raise ValueError("Either target_start or target_date must be provided.")
+
+    if context.target_period_type.lower() != "calendar_day":
+        raise RuntimeError(
+            "This challenge does not support the target_date shortcut. Pass "
+            "--target_start explicitly."
+        )
+    return _canonical_target_start_for_date(context=context, target_date=target_date)
+
+
 def _load_env_file(path: Path) -> dict:
     if not path.exists() or not path.is_file():
         return {}
@@ -364,8 +437,8 @@ def save_payload_to_file(payload: dict, output_path: str) -> Path:
     ordered_keys = [
         "challenge_id",
         "area",
-        "target_date",
         "target_start",
+        "target_date",
         "values",
         "points",
     ]
@@ -446,6 +519,10 @@ def _validate_payload(payload: Any, *, source: str) -> dict:
         raise RuntimeError(f"{source} returned payload['points'] that is not a list.")
     if has_values and not isinstance(payload.get("values"), list):
         raise RuntimeError(f"{source} returned payload['values'] that is not a list.")
+    if has_values and "target_start" not in payload and "target_date" not in payload:
+        raise RuntimeError(
+            f"{source} returned a dense payload without 'target_start' or 'target_date'."
+        )
     return payload
 
 
@@ -512,8 +589,8 @@ def run_setup_check(
     print("Suggested next steps:")
     print("  1. python run_forecast_model.py --list_open_challenges")
     print(
-        "  2. python run_forecast_model.py --target_date DD-MM-YYYY "
-        "--challenge_id <challenge_id> --save_payload test_payload.json"
+        "  2. python run_forecast_model.py --challenge_id <challenge_id> "
+        "--save_payload test_payload.json"
     )
     print(
         "  3. python submit_forecast_to_energy_arena.py --payload_path test_payload.json"
@@ -1028,27 +1105,18 @@ def build_payload_from_source(
     if len(context.areas) != 1:
         payload["area"] = context.area
 
-    if context.target_period_type.lower() == "calendar_day":
-        payload["target_date"] = target_date.isoformat()
-    else:
-        tz = ZoneInfo(context.target_period_timezone or tz_name)
-        target_start = datetime(
-            target_date.year,
-            target_date.month,
-            target_date.day,
-            0,
-            0,
-            0,
-            tzinfo=tz,
-        )
-        payload["target_start"] = target_start.isoformat()
+    payload["target_start"] = _canonical_target_start_for_date(
+        context=context,
+        target_date=target_date,
+    ).isoformat()
 
     return payload
 
 
 def build_payload(
     *,
-    target_date: date,
+    target_date: date | None = None,
+    target_start: datetime | None = None,
     challenge_id: str,
     area: str | None,
     entsoe_api_key: str,
@@ -1064,13 +1132,23 @@ def build_payload(
         area=area,
         arena_api_key=arena_api_key,
     )
+    resolved_target_start = _resolve_requested_target_start(
+        context=context,
+        target_date=target_date,
+        target_start=target_start,
+    )
+    resolved_target_date = _target_date_from_target_start(
+        context=context,
+        target_start=resolved_target_start,
+    )
 
     custom_model = _load_custom_model_module()
     custom_build_payload = (
         getattr(custom_model, "build_payload", None) if custom_model else None
     )
     hook_kwargs = {
-        "target_date": target_date,
+        "target_date": resolved_target_date,
+        "target_start": resolved_target_start,
         "challenge_id": context.challenge_id,
         "area": context.area,
         "entsoe_api_key": entsoe_api_key,
@@ -1086,8 +1164,15 @@ def build_payload(
         custom_payload = _call_hook(custom_build_payload, **hook_kwargs)
         return _validate_payload(custom_payload, source="custom_model.build_payload")
 
+    if context.target_period_type.lower() != "calendar_day":
+        raise RuntimeError(
+            "The built-in starter baseline currently supports only calendar_day "
+            "challenges. Implement custom_model.build_payload(...) if you want "
+            "to handle this challenge with an explicit target_start."
+        )
+
     payload = build_payload_from_source(
-        target_date=target_date,
+        target_date=resolved_target_date,
         context=context,
         data_source=data_source,
         entsoe_api_key=entsoe_api_key,
@@ -1218,7 +1303,20 @@ def main() -> None:
         "--target_date",
         type=str,
         default=None,
-        help="Target day in DD-MM-YYYY. Required unless --list_open_challenges or --check_setup is used.",
+        help=(
+            "Calendar-day shortcut in DD-MM-YYYY. Prefer --target_start for new "
+            "work. If both target arguments are omitted, the script uses the "
+            "selected challenge's next_target_start from --list_open_challenges."
+        ),
+    )
+    parser.add_argument(
+        "--target_start",
+        type=str,
+        default=None,
+        help=(
+            "Canonical target-period start in ISO8601 with timezone, for example "
+            "2026-03-27T00:00:00+01:00. Preferred over --target_date."
+        ),
     )
     parser.add_argument(
         "--challenge_id",
@@ -1353,18 +1451,67 @@ def main() -> None:
             file=sys.stderr,
         )
         sys.exit(1)
-    if not args.target_date:
+    if args.target_date and args.target_start:
         print(
-            "Error: --target_date is required unless --list_open_challenges or --check_setup is used.",
+            "Error: pass either --target_date or --target_start, not both.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    try:
-        target_date = parse_target_date(args.target_date)
-    except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        sys.exit(1)
+    target_date = None
+    target_start = None
+    active_lookup = None
+    if args.target_start:
+        try:
+            target_start = parse_target_start(args.target_start)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+    elif args.target_date:
+        try:
+            target_date = parse_target_date(args.target_date)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        try:
+            active_lookup = get_active_challenge_lookup(
+                args.api_base,
+                arena_api_key=arena_key or None,
+            )
+        except Exception as exc:
+            print(
+                "Error: no target override was passed and open challenge metadata "
+                f"could not be loaded: {exc}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        current_info = active_lookup.get(args.challenge_id)
+        if current_info is None:
+            print(
+                "Error: no target override was passed, but challenge "
+                f"'{args.challenge_id}' is not currently listed by /api/v1/challenges/open. "
+                "Pass --target_start or --target_date explicitly.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        next_target_start = str(current_info.get("next_target_start") or "").strip()
+        try:
+            target_start = parse_target_start(next_target_start)
+        except ValueError:
+            print(
+                "Error: no target override was passed, but challenge "
+                f"'{args.challenge_id}' does not expose a parseable next_target_start "
+                "in /api/v1/challenges/open. Pass --target_start or --target_date explicitly.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Target start defaulted to {target_start.isoformat()} from API next_target_start "
+            f"{next_target_start}"
+        )
 
     try:
         context = _resolve_challenge_context(
@@ -1386,17 +1533,23 @@ def main() -> None:
         )
         sys.exit(1)
 
+    target_label = (
+        f"Target start: {target_start.isoformat()}"
+        if target_start is not None
+        else f"Target date: {target_date}"
+    )
     print(
-        f"Target date: {target_date} | challenge: {context.challenge_id} | "
+        f"{target_label} | challenge: {context.challenge_id} | "
         f"target: {context.target_name} | area: {context.area} | "
         f"format: {context.accepted_forecast_format} | source: {data_source}"
     )
 
     try:
-        active_lookup = get_active_challenge_lookup(
-            args.api_base,
-            arena_api_key=arena_key or None,
-        )
+        if active_lookup is None:
+            active_lookup = get_active_challenge_lookup(
+                args.api_base,
+                arena_api_key=arena_key or None,
+            )
     except Exception as exc:
         print(
             f"Warning: failed to fetch open challenge metadata: {exc}",
@@ -1420,6 +1573,7 @@ def main() -> None:
     try:
         payload = build_payload(
             target_date=target_date,
+            target_start=target_start,
             challenge_id=context.challenge_id,
             area=context.area,
             entsoe_api_key=entsoe_key,

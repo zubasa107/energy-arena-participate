@@ -60,10 +60,10 @@ The safest pattern is to keep the incoming payload structure and replace only th
 Current payload rules:
 
 - keep top-level `challenge_id`
+- keep top-level `target_start`
 - keep `values` in the original order
-- keep `target_date` for current calendar-day challenges
+- keep `target_date` only if you intentionally rely on the legacy calendar-day shortcut
 - `area` is optional and usually omitted for current single-area challenges
-- `target_start` is only needed for non-`calendar_day` challenges
 - for point challenges, each entry in `values` is a scalar
 - for quantile challenges, each entry in `values` is exactly the configured quantile list
 - for ensemble challenges, each entry in `values` is exactly the configured ensemble-member list
@@ -75,6 +75,7 @@ def transform_payload(
     payload,
     *,
     target_date,
+    target_start,
     challenge_id,
     area,
     entsoe_api_key,
@@ -99,6 +100,7 @@ def transform_payload(
 Why this is safest:
 
 - target-period anchoring is already correct
+- `challenge_id + target_start` already identify the submission target
 - the challenge format is already resolved
 - you only replace the forecast values
 - the same hook is used by manual submissions and automation

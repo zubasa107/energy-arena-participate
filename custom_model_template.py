@@ -6,7 +6,7 @@ custom_model.py if it exists in the repository root.
 
 The incoming payload already has:
 - the correct challenge_id
-- the correct target day anchor for the chosen challenge
+- the correct canonical target_start anchor for the chosen challenge
 - the correct value shape for point / quantile / ensemble mode
 
 The safest way to integrate your own model is to replace only the forecast
@@ -18,13 +18,14 @@ functions from data_loaders.py inside custom_model.py.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 
 def transform_payload(
     payload: dict,
     *,
     target_date: date,
+    target_start: datetime,
     challenge_id: str,
     area: str,
     entsoe_api_key: str,
@@ -48,6 +49,7 @@ def transform_payload(
     """
     del (
         target_date,
+        target_start,
         challenge_id,
         area,
         entsoe_api_key,
