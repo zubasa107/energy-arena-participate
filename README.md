@@ -19,13 +19,27 @@ Everything else is internal support code or documentation.
 ## First submission
 
 ### 1. Install
-
+Setting up the repository and virtual environment.
 ```bash
 git clone <this-repo-url> energy-arena-participate
 cd energy-arena-participate
+python -m venv .venv
+#ACtivating the virtual enviorment for Mac/Linux
+source .venv/bin/activate
+
+# activating it using Windows CMD
+.venv\Scripts\activate.bat
+
+# activating it using Windows PowerShell
+.venv\Scripts\Activate.ps1
+
 pip install -r requirements.txt
 ```
-
+A virtual environment isolates project dependencies, preventing version conflicts between projects and keeping your global Python installation clean.
+Activate it before every session (like above) and deactivate it like below after you are finished.
+```bash
+deactivate
+```
 ### 2. Create `.env`
 
 Copy `.env.example` to `.env` and fill in:
@@ -183,8 +197,8 @@ python run_daily_submissions.py --use_global_env
 - Windows: `WINDOWS_TASK_SCHEDULER.md`
 - Cross-platform notes: `SCHEDULE.md`
 
-The recommended Windows wrappers `run_daily_submissions.bat` and
-`run_daily_submissions.ps1` now write logs to `.\logs\`, including a timestamped
+The recommended wrappers `run_daily_submissions.bat`,
+`run_daily_submissions.ps1` and `run_daily_submissions.sh` now write logs to `.\logs\`, including a timestamped
 file per run and `run_daily_submissions_latest.log`.
 Daily automation also archives the generated payload JSON files in
 `.\submitted_payloads\challenge_<id>\`.

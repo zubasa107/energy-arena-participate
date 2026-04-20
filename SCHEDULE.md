@@ -56,9 +56,8 @@ Optional:
 2. Add:
 
 ```cron
-30 11 * * * cd /path/to/energy-arena-participate && /usr/bin/python3 run_daily_submissions.py
+30 11 * * * cd /path/to/energy-arena-participate && ./.venv/bin/python -u run_daily_submissions.py
 ```
-
 If you intentionally want global env fallback, add `--use_global_env`.
 
 If you want ENTSO-E instead of the default SMARD baseline, append
@@ -72,3 +71,12 @@ python run_daily_submissions.py --dry_run
 
 Without `--target_start` or `--target_date`, the runner uses each selected
 challenge's `next_target_start` from the open challenge API.
+
+## Recommended Wrapper
+You can alternatively use the wrapper script _run_daily_submissions.sh_ to handle submissions and logging.
+
+1. Open crontab: `crontab -e`
+2. Add:
+```bash
+30 11 * * * cd /path/to/energy-arena-participate && ./run_daily_submissions.sh
+```
