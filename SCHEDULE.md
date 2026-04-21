@@ -3,7 +3,7 @@
 Run one of the following every day at **11:30 CET/CEST**:
 
 - **Windows:** Task Scheduler with `run_daily_submissions.bat` or `run_daily_submissions.ps1`
-- **Linux/macOS:** cron with `run_daily_submissions.py`
+- **Linux/macOS:** cron with `run_daily_submissions.sh` or `.venv/bin/python`
 
 ## Key handling
 
@@ -41,7 +41,7 @@ Generated payloads are archived under `.\submitted_payloads\challenge_<id>\`.
 
 Alternative:
 
-- Program/script: `python`
+- Program/script: `C:\path\to\energy-arena-participate\.venv\Scripts\python.exe`
 - Arguments: `run_daily_submissions.py`
 - Start in: `C:\path\to\energy-arena-participate`
 
@@ -56,13 +56,19 @@ Optional:
 2. Add:
 
 ```cron
-30 11 * * * cd /path/to/energy-arena-participate && /usr/bin/python3 run_daily_submissions.py
+30 11 * * * cd /path/to/energy-arena-participate && ./.venv/bin/python -u run_daily_submissions.py
 ```
 
 If you intentionally want global env fallback, add `--use_global_env`.
 
 If you want ENTSO-E instead of the default SMARD baseline, append
 `--data_source entsoe`.
+
+Recommended wrapper:
+
+```cron
+30 11 * * * cd /path/to/energy-arena-participate && ./run_daily_submissions.sh
+```
 
 ## Dry run
 

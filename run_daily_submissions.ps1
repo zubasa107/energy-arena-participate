@@ -26,7 +26,8 @@ function Quote-CmdArg {
     return $Value
 }
 
-$commandParts = @("python", "-u", "run_daily_submissions.py") + $args
+$venvPython = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+$commandParts = @($venvPython, "-u", "run_daily_submissions.py") + $args
 $cmdLine = (($commandParts | ForEach-Object { Quote-CmdArg $_ }) -join " ") + " 2>&1"
 
 Write-Host "Writing log to $logPath"

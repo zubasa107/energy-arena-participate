@@ -10,7 +10,8 @@ Generated payloads are archived under `.\submitted_payloads\challenge_<id>\`.
 ## Prerequisites
 
 - Python installed
-- `pip install -r requirements.txt`
+- virtual environment created with `python -m venv .venv`
+- dependencies installed with `.venv\Scripts\python.exe -m pip install -r requirements.txt`
 - local `.env` created in the repo folder
 
 ```bash
@@ -51,7 +52,7 @@ Recommended:
 
 Alternative:
 
-- Program/script: `python`
+- Program/script: `C:\path\to\energy-arena-participate\.venv\Scripts\python.exe`
 - Add arguments: `run_daily_submissions.py`
 - Start in: `C:\path\to\energy-arena-participate`
 
