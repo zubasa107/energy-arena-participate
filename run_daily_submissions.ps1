@@ -10,7 +10,7 @@ Set-Location $PSScriptRoot
 $logDir = Join-Path $PSScriptRoot "logs"
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
-$timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+$timestamp = "{0}_{1}" -f (Get-Date -Format "yyyyMMdd_HHmmss_fff"), $PID
 $logPath = Join-Path $logDir "run_daily_submissions_$timestamp.log"
 $latestLogPath = Join-Path $logDir "run_daily_submissions_latest.log"
 

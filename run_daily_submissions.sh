@@ -13,7 +13,7 @@ cd "$(dirname "$0")" || exit 1
 LOG_DIR="$(pwd)/logs"
 mkdir -p "$LOG_DIR"
 
-TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
+TIMESTAMP="$(date +"%Y%m%d_%H%M%S")_$$"
 LOG_PATH="$LOG_DIR/run_daily_submissions_$TIMESTAMP.log"
 LATEST_LOG_PATH="$LOG_DIR/run_daily_submissions_latest.log"
 
