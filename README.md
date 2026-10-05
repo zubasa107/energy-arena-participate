@@ -170,6 +170,33 @@ Provides:
 
 This is the built-in baseline model logic used by the starter flow.
 
+### Daylight-saving time
+
+The starter validates historical data against the reference day's own local
+calendar-day grid, then maps it onto the delivery day's grid by local clock
+time. At quarter-hour resolution, ordinary days have 96 values, spring-forward
+days have 92, and autumn days have 100.
+
+- On a spring delivery day, the nonexistent 02:00-02:45 hour is skipped.
+- On an autumn delivery day, a normal reference day's 02:00-02:45 values are
+  reused for both occurrences, with distinct UTC timestamps.
+- On an ordinary delivery day following an autumn transition, the first
+  occurrence of the reference day's repeated hour is used.
+- If the reference day is a spring transition day, missing local clock times
+  use the same elapsed UTC offset from the reference day's start.
+
+These rules match the Arena's built-in naive benchmark and also apply to
+quantile and ensemble history samples. ENTSO-E requests run between consecutive
+local midnights, so reference days may span 23, 24, or 25 hours. Incomplete days,
+duplicate timestamps, and non-finite values are still rejected for the point
+baseline; unusable probabilistic reference days are skipped.
+
+Run the offline DST regression checks with the project's dependencies installed:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 ## Integrate your own model
 
 If you want to replace the built-in starter model:

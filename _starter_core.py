@@ -671,7 +671,7 @@ def fetch_entsoe_series(
 
     client = EntsoePandasClient(api_key=api_key)
     start_ts = pd.Timestamp(delivery_date, tz=tz_name)
-    end_ts = start_ts + pd.Timedelta(days=1)
+    end_ts = pd.Timestamp(delivery_date + timedelta(days=1), tz=tz_name)
     method = getattr(client, entsoe_method, None)
     if method is None:
         raise RuntimeError(f"EntsoePandasClient has no method {entsoe_method!r}")
@@ -826,27 +826,15 @@ def _fetch_source_series(
     raise RuntimeError(f"Unsupported data source: {data_source}")
 
 
-def _series_to_shifted_points(
-    series: pd.Series,
-    *,
-    lookback_days: int,
-    tz_name: str,
-) -> List[Dict[str, float | str]]:
+def _calendar_day_bounds_utc(day: date, tz_name: str) -> tuple[datetime, datetime]:
+    """Use consecutive local midnights, including 23- and 25-hour days."""
     tz = ZoneInfo(tz_name)
-    points: List[Dict[str, float | str]] = []
-
-    for ts, value in series.items():
-        if hasattr(ts, "to_pydatetime"):
-            ts_dt = ts.to_pydatetime()
-        else:
-            ts_dt = datetime.fromisoformat(str(ts))
-        if ts_dt.tzinfo is None:
-            ts_dt = ts_dt.replace(tzinfo=timezone.utc)
-        shifted_local = ts_dt.astimezone(tz) + timedelta(days=lookback_days)
-        points.append({"ts": shifted_local.isoformat(), "value": float(value)})
-
-    points.sort(key=lambda item: str(item["ts"]))
-    return points
+    following_day = day + timedelta(days=1)
+    start = datetime(day.year, day.month, day.day, tzinfo=tz)
+    end = datetime(
+        following_day.year, following_day.month, following_day.day, tzinfo=tz
+    )
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
 def _resolution_step_from_context(
@@ -869,7 +857,7 @@ def _resolution_step_from_context(
 
     positive_deltas = []
     previous = None
-    for ts in series.index.sort_values():
+    for ts in pd.to_datetime(series.index, utc=True).sort_values():
         current = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
         if previous is not None:
             delta = current - previous
@@ -903,52 +891,108 @@ def _validate_series_point_count(
     series: pd.Series,
     data_source: str,
     delivery_date: date,
-    target_date: date,
-) -> None:
-    if context.target_period_type.lower() != "calendar_day":
-        return
-
+) -> timedelta:
+    """Validate the reference day's own complete grid before DST remapping."""
     step = _resolution_step_from_context(
         context=context,
         series=series,
         data_source=data_source,
     )
-    if step is None:
-        return
+    if step is None or step <= timedelta(0):
+        raise RuntimeError("Cannot determine the reference data's time-step.")
 
-    tz_name = context.target_period_timezone or context.reference_timezone or DEFAULT_TIMEZONE
-    tz = ZoneInfo(tz_name)
-    target_start = datetime(
-        target_date.year,
-        target_date.month,
-        target_date.day,
-        0,
-        0,
-        0,
-        tzinfo=tz,
-    )
-    target_end = target_start + timedelta(days=1)
-    total_seconds = (
-        target_end.astimezone(timezone.utc) - target_start.astimezone(timezone.utc)
-    ).total_seconds()
-    step_seconds = step.total_seconds()
-    if step_seconds <= 0:
-        return
+    tz_name = context.reference_timezone or context.target_period_timezone or DEFAULT_TIMEZONE
+    source_start, source_end = _calendar_day_bounds_utc(delivery_date, tz_name)
+    duration = source_end - source_start
+    if duration % step != timedelta(0):
+        raise RuntimeError("Reference day length is not divisible by its time-step.")
 
-    expected_count = int(round(total_seconds / step_seconds))
+    expected_count = duration // step
     actual_count = len(series)
-    if actual_count == expected_count:
-        return
+    expected_index = pd.date_range(
+        source_start, source_end, freq=pd.Timedelta(step), inclusive="left"
+    )
+    actual_index = pd.to_datetime(series.index, utc=True).sort_values()
+    if (
+        actual_count == expected_count
+        and list(actual_index) == list(expected_index)
+        and np.isfinite(series.to_numpy(dtype=float)).all()
+    ):
+        return step
 
     source_label = "SMARD" if data_source == "smard" else "ENTSO-E"
     resolution_label = _resolution_label(step)
     raise RuntimeError(
-        f"Incomplete {source_label} data for challenge {context.challenge_id}/{context.area}: "
+        f"Incomplete or invalid {source_label} data for challenge {context.challenge_id}/{context.area}: "
         f"got {actual_count} {resolution_label} values for source day {delivery_date}, "
-        f"but target_date {target_date} in timezone {tz_name} requires {expected_count}. "
-        "This usually means the source day has not been fully published yet. "
+        f"which requires {expected_count} on its own grid in timezone {tz_name}. "
+        "Source timestamps must cover the full day without gaps or duplicates, "
+        "and values must be finite. The source day may not have been fully published yet. "
         "Run again later or at the scheduled submission time."
     )
+
+
+def _series_to_target_points(
+    series: pd.Series,
+    *,
+    context: ChallengeContext,
+    data_source: str,
+    delivery_date: date,
+    target_date: date,
+) -> List[Dict[str, float | str]]:
+    """Match local clock times on the target grid, as the Arena benchmark does.
+
+    Spring targets omit the missing hour; autumn targets reuse a normal source
+    hour twice. A normal target uses the first repeated source hour. For clock
+    times absent in a spring source day, use the same elapsed UTC offset.
+    """
+    if context.target_period_type.lower() != "calendar_day":
+        raise RuntimeError("The starter baseline requires calendar-day targets.")
+    step = _validate_series_point_count(
+        context=context,
+        series=series,
+        data_source=data_source,
+        delivery_date=delivery_date,
+    )
+    tz_name = context.target_period_timezone or context.reference_timezone or DEFAULT_TIMEZONE
+    tz = ZoneInfo(tz_name)
+    source_tz_name = context.reference_timezone or tz_name
+    source_start, _ = _calendar_day_bounds_utc(delivery_date, source_tz_name)
+    target_start, target_end = _calendar_day_bounds_utc(target_date, tz_name)
+    if (target_end - target_start) % step != timedelta(0):
+        raise RuntimeError("Target day length is not divisible by the source time-step.")
+
+    normalized = series.copy()
+    normalized.index = pd.to_datetime(series.index, utc=True)
+    normalized = normalized.sort_index()
+    source_by_ts: dict[datetime, float] = {}
+    source_by_clock: dict[tuple[int, int, int, int], list[float]] = {}
+    for timestamp, value in normalized.items():
+        ts = timestamp.to_pydatetime()
+        local = ts.astimezone(tz)
+        clock = (local.hour, local.minute, local.second, local.microsecond)
+        source_by_ts[ts] = float(value)
+        source_by_clock.setdefault(clock, []).append(float(value))
+
+    points: List[Dict[str, float | str]] = []
+    occurrences: dict[tuple[int, int, int, int], int] = {}
+    current = target_start
+    while current < target_end:
+        local = current.astimezone(tz)
+        clock = (local.hour, local.minute, local.second, local.microsecond)
+        occurrence = occurrences.get(clock, 0)
+        occurrences[clock] = occurrence + 1
+        candidates = source_by_clock.get(clock)
+        if candidates:
+            value = candidates[min(occurrence, len(candidates) - 1)]
+        else:
+            reference_ts = source_start + (current - target_start)
+            if reference_ts not in source_by_ts:
+                raise RuntimeError(f"No reference value can be aligned to {current.isoformat()}.")
+            value = source_by_ts[reference_ts]
+        points.append({"ts": current.isoformat(), "value": value})
+        current += step
+    return points
 
 
 def collect_probabilistic_history_samples(
@@ -969,7 +1013,6 @@ def collect_probabilistic_history_samples(
     start_lookback_days = int(target_cfg["history_start_lookback_days"])
     step_days = int(target_cfg["history_step_days"])
     history_count = int(target_cfg["history_count"])
-    tz_name = context.reference_timezone or DEFAULT_TIMEZONE
 
     for i in range(history_count):
         lookback_days = start_lookback_days + i * step_days
@@ -983,11 +1026,18 @@ def collect_probabilistic_history_samples(
         if series.empty:
             continue
 
-        for point in _series_to_shifted_points(
-            series,
-            lookback_days=lookback_days,
-            tz_name=tz_name,
-        ):
+        try:
+            points = _series_to_target_points(
+                series,
+                context=context,
+                data_source=data_source,
+                delivery_date=delivery_date,
+                target_date=target_date,
+            )
+        except RuntimeError:
+            # An incomplete analog day must not supply shifted or invented samples.
+            continue
+        for point in points:
             ts = str(point["ts"])
             history_by_ts.setdefault(ts, []).append(float(point["value"]))
 
@@ -1056,7 +1106,6 @@ def build_payload_from_source(
     target_cfg = TARGET_BASELINES[context.target_code]
     lookback_days = int(target_cfg["point_lookback_days"])
     delivery_date = target_date - timedelta(days=lookback_days)
-    tz_name = context.reference_timezone or DEFAULT_TIMEZONE
 
     series = _fetch_source_series(
         data_source=data_source,
@@ -1070,18 +1119,12 @@ def build_payload_from_source(
             f"No {source_label} data for {context.target_code}/{context.area} "
             f"on {delivery_date} (d-{lookback_days}). Data may not be published yet."
         )
-    _validate_series_point_count(
+    points = _series_to_target_points(
+        series,
         context=context,
-        series=series,
         data_source=data_source,
         delivery_date=delivery_date,
         target_date=target_date,
-    )
-
-    points = _series_to_shifted_points(
-        series,
-        lookback_days=lookback_days,
-        tz_name=tz_name,
     )
 
     history_by_ts: Dict[str, List[float]] | None = None
